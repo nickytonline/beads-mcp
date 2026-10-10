@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-TypeScript template for building [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers over HTTP.
+Beads adapter based on the TypeScript template for building [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers over HTTP.
 
 ## Key Commands
 
@@ -42,6 +42,10 @@ src/
   index.ts       # Effect startup and shutdown; runs the app on PORT
   tools.ts       # registerTools() wiring + per-tool logic functions
   tools.test.ts  # colocated integration tests (in-memory client/server)
+  hardening.test.ts # concurrency, ownership, change-detection and error-contract tests
+  beads.ts       # process-wide bd queue and subprocess execution
+  errors.ts      # typed error codes and bd stderr classification
+  revision.ts    # state_revision / activity_revision and lease-field stripping
   config.ts      # Env var loading and validation via Effect Config
   logger.ts      # Effect structured logging
   lib/
@@ -49,6 +53,10 @@ src/
     mcp-schema.ts  # Effect Schema adapter for MCP Standard Schema
     utils.test.ts  # colocated unit tests
     mcp-schema.test.ts # adapter and JSON Schema dialect tests
+  test-support/
+    fake-bd.ts     # stateful in-memory bd stand-in for tests
+docs/
+  GUARANTEES.md  # what is guaranteed, tested, and still unverified
 dist/            # compiled output (ES modules)
 ```
 
@@ -138,7 +146,7 @@ To build your own MCP server from this template:
 
 1. Update `package.json` (name, description, version). `name` and `version` are the MCP server identity unless `SERVER_NAME` or `SERVER_VERSION` is set
 2. Add/replace env vars in `src/config.ts`
-3. Replace the `echo` / `elicit_echo` tools in `src/tools.ts` with your tools
+3. Replace the `echo` / `elicit_echo` tools in `src/tools.ts` with Beads tools
 4. Add business logic under `src/`
 5. Update `README.md` and this `AGENTS.md` to reflect your project
 
@@ -147,3 +155,14 @@ To build your own MCP server from this template:
 - Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`; use `feat!:` for breaking template migrations
 - PR description: summarize user-facing impact, link issues, list any new env vars
 - Include verification evidence: `npm run lint`, `npm run test:ci`
+
+## Beads adapter invariants
+
+- `src/beads.ts` owns the process-wide queue, shared across stateless requests. Queue all CLI access, including reads and compound operations.
+- Execute `bd` with argument arrays and no shell; never accept arbitrary commands or filesystem paths from tool inputs.
+- Keep one process and one replica for embedded mode. Do not run direct CLI/backup access concurrently. See README.md, "Running multiple MCP replicas", before changing storage mode or replica count; local queues do not coordinate ownership checks across pods.
+- Require a bearer token in production. Actor inputs are attribution, not authenticated identity.
+- Claims never expire and there are no leases; do not advertise lease behavior. `lease_expires_at` and `heartbeat_at` from `bd` are stripped from responses.
+- Optimistic concurrency is opt-in: `update`, `release`, `handoff` and `complete` take `expected_revision` (the `state_revision` from `get`). Without it writes are last-writer-wins. Keep `docs/GUARANTEES.md` and the tool descriptions in sync with the code, and do not claim guarantees that no test covers.
+- Live verification: `BD_BIN=/path/to/bd npm run test:beads`; default tests skip it.
+- Container pins Beads 1.3.1. Kubernetes samples and the deployment prompt live in `deploy/k3s/`.

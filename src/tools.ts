@@ -1,195 +1,512 @@
-import type {
-  CallToolResult,
-  InputRequiredResult,
-  McpServer,
-  ServerContext,
-} from "@modelcontextprotocol/server";
-import { inputRequired, inputResponse } from "@modelcontextprotocol/server";
-import { Effect, Either, ParseResult, Schema } from "effect";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
+import { Effect, Schema } from "effect";
+import { beads, type BeadsCommand, type BeadsTransaction } from "./beads.ts";
+import { BeadsError, errorPayload } from "./errors.ts";
 import { toMcpSchema } from "./lib/mcp-schema.ts";
-import { createErrorResult, createTextResult, runMcpEffect } from "./lib/utils.ts";
+import {
+  REVISION_PATTERN,
+  stateRevision,
+  stripLeaseMetadata,
+  withRevisions,
+  type Issue,
+} from "./revision.ts";
+import {
+  createErrorResult,
+  createTextResult,
+  runMcpEffect,
+} from "./lib/utils.ts";
 import { logger } from "./logger.ts";
 
-const ELICIT_ECHO_MESSAGE_KEY = "message";
-
-const ElicitEchoOutputSchema = toMcpSchema(
-  Schema.Struct({
-    echo: Schema.NullOr(Schema.String).annotations({
-      description: "The echoed message, or null if none was provided",
-    }),
-    reason: Schema.optional(
-      Schema.String.annotations({
-        description: "Why no message was echoed, when applicable",
-      }),
-    ),
-  }),
+const text = (description: string) =>
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_000)).annotations(
+    { description },
+  );
+const id = text("Full Beads issue ID").pipe(
+  Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
 );
-
-const EchoInputSchema = toMcpSchema(
-  Schema.Struct({
-    message: Schema.String.annotations({ description: "The message to echo back" }),
-  }),
-);
-
-const EchoOutputSchema = toMcpSchema(
-  Schema.Struct({
-    echo: Schema.String.annotations({ description: "The echoed message" }),
-  }),
-);
-
-const AcceptedElicitationSchema = Schema.Struct({
-  message: Schema.String,
+const actor = text(
+  "Stable agent identity for attribution, e.g. codex-worker-1; not an authentication credential",
+).pipe(Schema.maxLength(128), Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/));
+const priority = Schema.Int.pipe(Schema.between(0, 4)).annotations({
+  description: "Priority: 0 highest, 4 lowest",
 });
+const status = Schema.Literal(
+  "open",
+  "in_progress",
+  "blocked",
+  "deferred",
+).annotations({ description: "Task status; use complete to close" });
+const limit = Schema.optional(
+  Schema.Int.pipe(Schema.between(1, 100)).annotations({
+    description: "Maximum results, default 20",
+  }),
+);
+const opt = Schema.optional;
+const expectedRevision = opt(
+  text(
+    "state_revision from get. If the task changed since you read it, the write is rejected with REVISION_CONFLICT and nothing is modified. Omit for last-writer-wins.",
+  ).pipe(Schema.pattern(REVISION_PATTERN)),
+);
+const issueFields = {
+  title: opt(text("Task title")),
+  description: opt(text("Task description")),
+  acceptance: opt(text("Acceptance criteria")),
+  priority: opt(priority),
+};
+const outputSchema = toMcpSchema(
+  Schema.Struct({
+    data: Schema.Unknown.annotations({
+      description:
+        "Native Beads JSON result; compound operations return named fields",
+    }),
+  }),
+);
 
-/**
- * Registers all MCP tools on the server.
- * Called once per request from getServer() in src/index.ts (the 2026-07-28
- * spec serves each request from a fresh instance — there is no per-connection
- * session to register tools once for).
- */
-export function registerTools(server: McpServer): void {
-  server.registerTool(
-    "elicit_echo",
-    {
-      title: "Elicit Echo",
-      description: "Ask the user what they want to echo back, then echoes it",
-      // `outputSchema` lets clients validate and consume `structuredContent`
-      // (see createTextResult). The echo may be null when the user declines or
-      // cancels, so `echo` is nullable and not required.
-      // https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
-      outputSchema: ElicitEchoOutputSchema,
-      // Annotations are untrusted hints clients use for UX/safety. This tool
-      // neither mutates state nor touches the outside world.
-      // https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    (ctx) => runMcpEffect(elicitEcho(ctx)),
-  );
-
-  server.registerTool(
-    "echo",
-    {
-      title: "Echo",
-      description: "Echo back the provided message",
-      inputSchema: EchoInputSchema,
-      outputSchema: EchoOutputSchema,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    (args, ctx) => runMcpEffect(echo(args, ctx)),
+function flags(args: Record<string, unknown>, names: string[]): string[] {
+  return names.flatMap((name) =>
+    args[name] === undefined ? [] : [`--${name}=${String(args[name])}`],
   );
 }
 
-/**
- * Asks the user what they want to echo via MCP elicitation, then echoes it
- * back. This is a multi-round-trip tool (protocol revision 2026-07-28): the
- * first call has no `inputResponses` yet, so it returns an `inputRequired()`
- * result carrying the embedded elicitation request. The client resolves that
- * and retries the same tool call with the response attached — this handler
- * runs again and reads it via `ctx.mcpReq.inputResponses` to produce the
- * final result. (The older push-style `elicitInput()` call throws on a
- * 2026-07-28-era request, which is why this can't be a single synchronous
- * await like it was under the previous stateful spec.)
- */
-function elicitEcho(
-  ctx: ServerContext,
-): Effect.Effect<CallToolResult | InputRequiredResult> {
-  return Effect.gen(function* () {
-    const toolName = "elicit_echo";
-    const requestId = ctx.mcpReq.id;
-    const response = inputResponse(ctx.mcpReq.inputResponses, ELICIT_ECHO_MESSAGE_KEY);
+function firstIssue(result: unknown): Issue | undefined {
+  const issue = Array.isArray(result) ? result[0] : result;
+  return issue && typeof issue === "object" ? (issue as Issue) : undefined;
+}
 
-    if (response.kind === "missing") {
-      return inputRequired({
-        inputRequests: {
-          [ELICIT_ECHO_MESSAGE_KEY]: inputRequired.elicit({
-            message: "What would you like to echo?",
-            // Elicitation `requestedSchema` must be a hand-written, flat JSON
-            // Schema (the restricted subset the MCP spec allows: primitive
-            // properties only, no nesting).
-            // https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#request-schema
-            requestedSchema: {
-              type: "object",
-              properties: {
-                message: {
-                  type: "string",
-                  title: "Message",
-                  description: "The message to echo back",
-                },
-              },
-              required: ["message"],
-            },
-          }),
+/** Read the task inside the caller's queue job; absent tasks are NOT_FOUND. */
+async function readIssue(
+  run: BeadsCommand,
+  issueId: string,
+  actor?: string,
+): Promise<Issue> {
+  const issue = firstIssue(await run(["show", issueId], actor));
+  if (!issue) {
+    throw new BeadsError("NOT_FOUND", "Task not found", {
+      retryable: false,
+      details: { id: issueId },
+    });
+  }
+  return issue;
+}
+
+/**
+ * Compare-and-swap check. Runs in the same queue job as the write that
+ * follows, so no other request through this process can interleave.
+ */
+function assertRevision(issue: Issue, expected: string | undefined): void {
+  if (expected === undefined) return;
+  const current = stateRevision(issue);
+  if (current !== expected) {
+    throw new BeadsError(
+      "REVISION_CONFLICT",
+      "Task changed since you read it. Nothing was modified. Re-read with get, reconcile, and retry with the new state_revision.",
+      {
+        retryable: false,
+        details: {
+          id: issue.id,
+          expected_revision: expected,
+          current_revision: current,
+          current: {
+            title: issue.title,
+            description: issue.description,
+            priority: issue.priority,
+            status: issue.status,
+            assignee: issue.assignee ?? null,
+            labels: Array.isArray(issue.labels) ? issue.labels : [],
+          },
         },
-      });
-    }
-
-    // Decline and cancel are valid user outcomes, not errors — return them as
-    // normal results (no isError) so the model treats them as a real answer.
-    if (response.kind !== "elicit") {
-      yield* logger.error(
-        { toolName, requestId, kind: response.kind },
-        "Tool execution failed",
-      );
-      return createErrorResult({ error: "Expected an elicitation response" });
-    }
-
-    if (response.action === "decline") {
-      yield* logger.info(
-        { toolName, requestId, action: "decline" },
-        "User declined elicitation",
-      );
-      return createTextResult({ echo: null, reason: "User declined to provide a message" });
-    }
-
-    if (response.action === "cancel") {
-      yield* logger.info(
-        { toolName, requestId, action: "cancel" },
-        "User cancelled elicitation",
-      );
-      return createTextResult({ echo: null, reason: "Elicitation was cancelled" });
-    }
-
-    const accepted = ParseResult.decodeUnknownEither(AcceptedElicitationSchema)(
-      response.content,
+      },
     );
-    if (Either.isLeft(accepted)) {
-      yield* logger.warn(
-        { toolName, requestId },
-        "Accept response missing content",
-      );
-      return createErrorResult({ error: "Accepted but no content was returned" });
-    }
-
-    yield* logger.info({ toolName, requestId }, "Tool executed");
-    return createTextResult({ echo: accepted.right.message });
-  });
+  }
 }
 
-/**
- * Echoes back the provided message.
- *
- * Server logs go through the Effect logger. MCP logging notifications are
- * deprecated as of protocol revision 2026-07-28 (SEP-2577), and
- * `logging/setLevel` is gone: a server must not emit `notifications/message`
- * unless the request opted in with `io.modelcontextprotocol/logLevel`.
- */
-function echo(
-  args: { message: string },
-  ctx: ServerContext,
-): Effect.Effect<CallToolResult> {
-  return Effect.gen(function* () {
-    const toolName = "echo";
-    const requestId = ctx.mcpReq.id;
-    const data = { echo: args.message };
-    yield* logger.info({ toolName, requestId }, "Tool executed");
-    return createTextResult(data);
-  });
+function assertOwnedBy(issue: Issue, actor: string, message: string): void {
+  if (issue.assignee !== actor) {
+    throw new BeadsError("OWNERSHIP_CONFLICT", message, {
+      retryable: false,
+      details: { id: issue.id, assignee: issue.assignee ?? null },
+    });
+  }
+}
+
+/** A task claimed by someone else cannot be moved or closed by another actor. */
+function assertNotClaimedByOther(issue: Issue, actor: string): void {
+  if (issue.assignee && issue.assignee !== actor) {
+    throw new BeadsError(
+      "OWNERSHIP_CONFLICT",
+      "Task is claimed by another actor; only the assignee can change its status or complete it",
+      {
+        retryable: false,
+        details: { id: issue.id, assignee: issue.assignee },
+      },
+    );
+  }
+}
+
+async function assertOwner(
+  run: BeadsCommand,
+  issueId: string,
+  owner: string,
+  expected?: string,
+) {
+  const issue = await readIssue(run, issueId, owner);
+  assertOwnedBy(
+    issue,
+    owner,
+    "Only the current assignee can release or hand off this task",
+  );
+  assertRevision(issue, expected);
+}
+
+/** Keep compound read/write jobs inside the same process-wide queue. */
+export function registerTools(
+  server: McpServer,
+  transaction: BeadsTransaction = beads.transaction,
+): void {
+  function register<A extends Record<string, unknown>>(
+    name: string,
+    description: string,
+    inputSchema: Schema.Schema<A, A, never>,
+    readOnly: boolean,
+    execute: (args: A, run: BeadsCommand) => Promise<unknown>,
+    additive = false,
+  ) {
+    server.registerTool(
+      name,
+      {
+        title: name.replaceAll("_", " "),
+        description,
+        inputSchema: toMcpSchema(inputSchema),
+        outputSchema,
+        annotations: {
+          readOnlyHint: readOnly,
+          destructiveHint: !additive,
+          openWorldHint: false,
+        },
+      },
+      (args, ctx: ServerContext) =>
+        runMcpEffect(
+          Effect.gen(function* () {
+            const data = yield* Effect.tryPromise({
+              try: () => transaction((run) => execute(args, run)),
+              catch: (error) => error,
+            }).pipe(
+              Effect.tapError((error) =>
+                logger.error(
+                  {
+                    toolName: name,
+                    requestId: ctx.mcpReq.id,
+                    code: errorPayload(error).code,
+                  },
+                  "Tool execution failed",
+                ),
+              ),
+            );
+            yield* logger.info(
+              { toolName: name, requestId: ctx.mcpReq.id },
+              "Tool executed",
+            );
+            return createTextResult({ data: stripLeaseMetadata(data) });
+          }).pipe(
+            Effect.catchAll((error) =>
+              Effect.succeed(createErrorResult(errorPayload(error))),
+            ),
+          ),
+        ),
+    );
+  }
+
+  register(
+    "ready",
+    "Find unblocked tasks to work on. Call claim before starting work.",
+    Schema.Struct({
+      limit,
+      priority: opt(priority),
+      label: opt(text("Required label; comma-separated labels use AND")),
+    }),
+    true,
+    (args, run) =>
+      run([
+        "ready",
+        `--limit=${args.limit ?? 20}`,
+        ...flags(args, ["priority", "label"]),
+      ]),
+  );
+
+  register(
+    "search",
+    "Search tasks, including completed tasks, by text and optional filters.",
+    Schema.Struct({
+      query: text("Search text"),
+      limit,
+      status: opt(
+        Schema.Literal(
+          "open",
+          "in_progress",
+          "blocked",
+          "deferred",
+          "closed",
+          "all",
+        ),
+      ),
+      assignee: opt(actor),
+      label: opt(text("Required labels, comma-separated")),
+    }),
+    true,
+    (args, run) =>
+      run([
+        "search",
+        `--query=${args.query}`,
+        `--limit=${args.limit ?? 20}`,
+        ...flags(args, ["status", "assignee", "label"]),
+      ]),
+  );
+
+  register(
+    "get",
+    "Read task details, dependencies, and comment bodies including handoffs. Adds state_revision (pass as expected_revision to update, release, handoff, or complete), activity_revision and last_activity_at (poll these to detect any change, including notes and labels, which bd's updated_at misses).",
+    Schema.Struct({ id }),
+    true,
+    async (args, run) => {
+      const result = await run(["show", args.id, "--include-comments"]);
+      if (Array.isArray(result)) {
+        if (!result.length)
+          throw new BeadsError("NOT_FOUND", "Task not found", {
+            retryable: false,
+            details: { id: args.id },
+          });
+        return result.map((issue) => withRevisions(issue as Issue));
+      }
+      const issue = firstIssue(result);
+      if (!issue)
+        throw new BeadsError("NOT_FOUND", "Task not found", {
+          retryable: false,
+          details: { id: args.id },
+        });
+      return withRevisions(issue);
+    },
+  );
+
+  register(
+    "create",
+    "Create a task. Parent creates a subtask; deps lists prerequisite IDs separated by commas.",
+    Schema.Struct({
+      ...issueFields,
+      title: text("Task title"),
+      actor,
+      type: opt(
+        Schema.Literal("task", "bug", "feature", "epic", "chore", "decision"),
+      ),
+      labels: opt(text("Comma-separated labels")),
+      parent: opt(id),
+      deps: opt(text("Comma-separated prerequisite IDs")),
+    }),
+    false,
+    (args, run) =>
+      run(
+        [
+          "create",
+          ...flags(args, [
+            "title",
+            "description",
+            "acceptance",
+            "priority",
+            "type",
+            "labels",
+            "parent",
+            "deps",
+          ]),
+        ],
+        args.actor,
+      ),
+    true,
+  );
+
+  register(
+    "update",
+    "Edit task fields. Pass expected_revision (state_revision from get) for compare-and-swap: a stale value fails with REVISION_CONFLICT and changes nothing. Without it the write is last-writer-wins. Changing status of a task claimed by another actor fails with OWNERSHIP_CONFLICT.",
+    Schema.Struct({
+      id,
+      actor,
+      ...issueFields,
+      status: opt(status),
+      "add-label": opt(text("Comma-separated labels to add")),
+      "remove-label": opt(text("Comma-separated labels to remove")),
+      expected_revision: expectedRevision,
+    }),
+    false,
+    async (args, run) => {
+      const edits = flags(args, [
+        "title",
+        "description",
+        "acceptance",
+        "priority",
+        "status",
+        "add-label",
+        "remove-label",
+      ]);
+      if (!edits.length)
+        throw new BeadsError(
+          "INVALID_INPUT",
+          "Provide at least one field to update",
+          { retryable: false },
+        );
+      const issue = await readIssue(run, args.id, args.actor);
+      assertRevision(issue, args.expected_revision);
+      if (args.status !== undefined) assertNotClaimedByOther(issue, args.actor);
+      return run(["update", args.id, ...edits], args.actor);
+    },
+  );
+
+  register(
+    "claim",
+    "Atomically claim a task as actor and set in_progress. A claim by a different actor fails with OWNERSHIP_CONFLICT. Claims never expire: ownership lasts until release, handoff with release, or complete. Re-claiming your own task is a no-op.",
+    Schema.Struct({ id, actor }),
+    false,
+    (args, run) => run(["update", args.id, "--claim"], args.actor),
+  );
+
+  register(
+    "release",
+    "Release your own claim and return the task to open. Optionally append a reason first.",
+    Schema.Struct({
+      id,
+      actor,
+      reason: opt(text("Reason for releasing")),
+      expected_revision: expectedRevision,
+    }),
+    false,
+    async (args, run) => {
+      await assertOwner(run, args.id, args.actor, args.expected_revision);
+      if (args.reason)
+        await run(["comments", "add", args.id, "--", args.reason], args.actor);
+      return run(
+        ["update", args.id, "--assignee=", "--status=open"],
+        args.actor,
+      );
+    },
+  );
+
+  register(
+    "add_note",
+    "Append findings, decisions, blockers, or evidence URLs to a task's comments.",
+    Schema.Struct({
+      id,
+      actor,
+      note: text("Comment body; include artifact URLs when relevant"),
+    }),
+    false,
+    (args, run) =>
+      run(["comments", "add", args.id, "--", args.note], args.actor),
+    true,
+  );
+
+  register(
+    "link",
+    "Add or remove a relationship. With blocks, id depends on target (target must finish first). Beads checks cycles.",
+    Schema.Struct({
+      id,
+      target: id,
+      actor,
+      action: Schema.Literal("add", "remove"),
+      type: opt(
+        Schema.Literal(
+          "blocks",
+          "parent-child",
+          "related",
+          "discovered-from",
+          "relates-to",
+          "supersedes",
+        ),
+      ),
+    }),
+    false,
+    (args, run) => {
+      if (args.action === "remove" && args.type)
+        throw new Error("Remove identifies the edge by its two IDs; omit type");
+      return run(
+        [
+          "dep",
+          args.action,
+          args.id,
+          args.target,
+          ...(args.action === "add" ? [`--type=${args.type ?? "blocks"}`] : []),
+        ],
+        args.actor,
+      );
+    },
+  );
+
+  register(
+    "complete",
+    "Close a task with a result summary and evidence. Does not force unresolved dependencies or gates. Fails with OWNERSHIP_CONFLICT if another actor holds the claim.",
+    Schema.Struct({
+      id,
+      actor,
+      summary: text("Result summary, including evidence or artifact URLs"),
+      expected_revision: expectedRevision,
+    }),
+    false,
+    async (args, run) => {
+      const issue = await readIssue(run, args.id, args.actor);
+      assertRevision(issue, args.expected_revision);
+      assertNotClaimedByOther(issue, args.actor);
+      return run(["close", args.id, `--reason=${args.summary}`], args.actor);
+    },
+  );
+
+  register(
+    "handoff",
+    "Append a structured handoff to your claimed task; optionally release it. Note and release are sequential, not a database transaction. If release fails, the note remains.",
+    Schema.Struct({
+      id,
+      actor,
+      done: text("Work completed"),
+      remaining: text("Work still needed"),
+      next: text("Next concrete action"),
+      release: opt(
+        Schema.Boolean.annotations({
+          description: "Release claim after recording handoff; default false",
+        }),
+      ),
+      expected_revision: expectedRevision,
+    }),
+    false,
+    async (args, run) => {
+      await assertOwner(run, args.id, args.actor, args.expected_revision);
+      const note = await run(
+        [
+          "comments",
+          "add",
+          args.id,
+          "--",
+          JSON.stringify({
+            kind: "handoff",
+            actor: args.actor,
+            done: args.done,
+            remaining: args.remaining,
+            next: args.next,
+          }),
+        ],
+        args.actor,
+      );
+      if (!args.release) return { note };
+      try {
+        return {
+          note,
+          task: await run(
+            ["update", args.id, "--assignee=", "--status=open"],
+            args.actor,
+          ),
+        };
+      } catch {
+        return {
+          note,
+          released: false,
+          warning:
+            "Handoff recorded but release failed; inspect the task before retrying.",
+        };
+      }
+    },
+  );
 }

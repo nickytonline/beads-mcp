@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 
 # Test results
 test-results.json
+
+# Beads state
+.beads/

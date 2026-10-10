@@ -1,4 +1,5 @@
 import express from "express";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { Effect } from "effect";
@@ -20,13 +21,19 @@ const getServer = () => {
 };
 
 /** Creates the Express app and MCP handler used by the production entrypoint. */
-export function createApp() {
+export function createApp(options: { token?: string } = {}) {
+  const token = options.token ?? process.env.MCP_TOKEN;
+  if (getConfig().NODE_ENV === "production" && !token) {
+    throw new Error("MCP_TOKEN is required in production");
+  }
   // createMcpHandler runs the factory fresh per request (2026-07-28 spec: no
   // initialize/initialized handshake, no Mcp-Session-Id). It also answers
   // 2025-era clients automatically via a stateless per-request fallback.
   const handler = createMcpHandler(getServer, {
     onerror: (error) => {
-      void runMcpEffect(logger.error({ error: error.message }, "Error handling MCP request"));
+      void runMcpEffect(
+        logger.error({ error: error.message }, "Error handling MCP request"),
+      );
     },
   });
 
@@ -42,7 +49,23 @@ export function createApp() {
   });
 
   const app = express();
-  app.use(express.json());
+  app.use("/mcp", (req, res, next) => {
+    if (token) {
+      const hash = (value: string) =>
+        createHash("sha256").update(value).digest();
+      if (
+        !timingSafeEqual(
+          hash(req.headers.authorization ?? ""),
+          hash(`Bearer ${token}`),
+        )
+      ) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+    }
+    next();
+  });
+  app.use(express.json({ limit: "128kb" }));
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });

@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Effect } from "effect";
 import { logger } from "./logger.ts";
 import { getConfig } from "./config.ts";
+import { beads } from "./beads.ts";
 import { createApp } from "./app.ts";
 import { runMcpEffect } from "./lib/utils.ts";
 
@@ -12,6 +13,11 @@ import { runMcpEffect } from "./lib/utils.ts";
  */
 const main = Effect.gen(function* () {
   const config = getConfig();
+  // Fail before listening if bd or the initialized store is unavailable.
+  yield* Effect.tryPromise({
+    try: () => beads.transaction((run) => run(["info"])),
+    catch: (error) => error,
+  });
   const { app, handler } = createApp();
 
   const httpServer = yield* Effect.async<HttpServer, unknown>((resume) => {
@@ -42,6 +48,10 @@ const main = Effect.gen(function* () {
         ],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid);
+      yield* Effect.tryPromise({
+        try: () => beads.drain(),
+        catch: (error) => error,
+      });
     });
 
     void runMcpEffect(
@@ -49,10 +59,14 @@ const main = Effect.gen(function* () {
         Effect.matchEffect({
           onSuccess: () => Effect.sync(() => process.exit(0)),
           onFailure: (error) =>
-            logger.error(
-              { error: error instanceof Error ? error.message : String(error) },
-              "Error during graceful shutdown",
-            ).pipe(Effect.andThen(Effect.sync(() => process.exit(1)))),
+            logger
+              .error(
+                {
+                  error: error instanceof Error ? error.message : String(error),
+                },
+                "Error during graceful shutdown",
+              )
+              .pipe(Effect.andThen(Effect.sync(() => process.exit(1)))),
         }),
       ),
     );
@@ -67,7 +81,7 @@ const main = Effect.gen(function* () {
       serverName: config.SERVER_NAME,
       version: config.SERVER_VERSION,
     },
-    `MCP TypeScript Template Server running on port ${config.PORT}`,
+    `Beads MCP server running on port ${config.PORT}`,
   );
 
   yield* Effect.never;

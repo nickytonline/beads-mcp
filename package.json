@@ -1,7 +1,7 @@
 {
-  "name": "mcp-typescript-template",
-  "version": "1.0.0",
-  "description": "TypeScript template for building MCP servers",
+  "name": "beads-mcp",
+  "version": "0.1.0",
+  "description": "HTTP MCP server for shared Beads task tracking",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -14,15 +14,15 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "format": "prettier --write src/**/*.ts",
-    "format:check": "prettier --check src/**/*.ts"
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test:beads": "BEADS_LIVE_TEST=1 vitest run src/beads.live.test.ts"
   },
   "keywords": [
     "mcp",
+    "beads",
     "typescript",
-    "template",
-    "vite",
-    "server"
+    "agents"
   ],
   "author": "",
   "license": "MIT",

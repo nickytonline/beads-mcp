@@ -1,255 +1,116 @@
-# MCP TypeScript Template
+# Beads MCP
 
-A TypeScript template for building remote Model Context Protocol (MCP) servers with modern tooling and best practices while leveraging the [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
+A TypeScript HTTP MCP server built from [nickytonline/mcp-typescript-template](https://github.com/nickytonline/mcp-typescript-template). Agents share Beads tasks through eleven tools; Node executes the installed `bd` CLI without a shell.
 
-## Features
+## Inspiration and intent
 
-This template provides:
+This project was inspired by a [livestream with Trillium Smith](https://www.youtube.com/live/Xg1b1NbOicI), where they mentioned building a Beads MCP. Credit to Trillium for the inspiration—and to anyone who explored this idea before them. This project makes no claim to originating the idea of exposing Beads through MCP.
 
-- **TypeScript 7** - Native compiler with strict configuration; TypeScript 6 remains available for `typescript-eslint`'s compiler API
-- **Effect** - Typed configuration, validation, logging, error handling, and async workflows
-- **Vite** - Fast build system with ES modules output
-- **Express** - Fast, unopinionated web framework for HTTP server
-- **ESLint + Prettier** - Code quality and formatting
-- **Docker** - Containerization support
-- **Example Tools** - `echo` and `elicit_echo` tools demonstrating tool implementation, structured output, annotations, and MCP elicitation
-
-## Getting Started
-
-The easiest way to get started is using `degit`:
-
-1. **Create a new project from this template**
-
-   ```bash
-   npx degit nickytonline/mcp-typescript-template my-mcp-server
-   cd my-mcp-server
-   ```
-
-2. **Install dependencies**
-
-   ```bash
-   npm install
-   ```
-
-3. **Build the project**
-
-   ```bash
-   npm run build
-   ```
-
-4. **Start the server**
-   ```bash
-   npm start
-   ```
-
-The server will be available at `http://localhost:3000` for MCP connections.
-
-### Alternative: Using GitHub Template
-
-You can also click the "Use this template" button on GitHub to create a new repository, then clone it:
-
-```bash
-git clone <your-repo-url>
-cd my-mcp-server
-npm install
-```
-
-## Development
-
-### Type checking
-
-`npm run typecheck` uses the TypeScript 7 compiler. The `typescript` package is an npm alias for the TypeScript 6 compatibility package because `typescript-eslint` still depends on TypeScript's legacy compiler API; the compatibility package is available as `tsc6` when needed.
-
-### Watch mode for development (with hot reloading)
-
-```bash
-npm run dev
-```
-
-### Build the project
-
-```bash
-npm run build
-```
-
-### Linting
-
-- Lint the project
-
-```bash
-npm run lint
-```
-
-- Fix all auto-fixable lint errors
-
-```bash
-npm run lint:fix
-```
-
-### Formatting
-
-- Format files in the project
-
-```bash
-npm run format
-```
-
-- Check formatting
-
-```bash
-npm run format:check
-```
-
-## Testing Your MCP Server
-
-You can test your MCP server using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-This will launch a web interface that allows you to:
-- Connect to your MCP server
-- Test your tools interactively
-- View request/response messages
-- Debug your MCP implementation
-
-Make sure your server is running (using `npm start` or `npm run dev`) before connecting with the inspector.
-
-## Available Tools
-
-The template includes two example tools:
-
-### echo
-
-Echoes back the provided message - a simple example to demonstrate MCP tool implementation.
-
-**Parameters:**
-
-- `message` (string) - The message to echo back
-
-### elicit_echo
-
-Demonstrates [MCP elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation): the tool takes no input, asks the connected client to prompt the user for a message, then echoes it back. Handles all three elicitation outcomes (accept, decline, cancel) and errors when the client doesn't support elicitation.
-
-Both tools declare an `outputSchema` and return `structuredContent` alongside the text result, and carry `annotations` (`readOnlyHint`, `idempotentHint`, `openWorldHint`) describing their safety profile.
-
-## Customizing Your MCP Server
-
-1. **Update package.json** - Change `name`, `version`, description, and keywords. The MCP server name and version are read from `name` and `version` unless `SERVER_NAME` or `SERVER_VERSION` is set
-2. **Modify src/tools.ts** - Replace the `echo` / `elicit_echo` tools with your custom tools
-3. **Add your logic** - Create additional TypeScript files for your business logic
-4. **Update README** - Document your specific MCP server functionality
-
-## Docker
-
-Build and run using Docker:
-
-- Build the Docker image
-
-```bash
-docker build -t my-mcp-server .
-```
-
-- Run the container
-
-```bash
-docker run -p 3000:3000 my-mcp-server
-```
-
-### Docker Compose
-
-A `docker-compose.yml` is included with a health check pre-configured:
-
-```bash
-docker compose up --build
-```
-
-## Project Structure
-
-```
-mcp-typescript-template/
-├── src/
-│   ├── app.ts            # Express app and MCP Node adapter wiring
-│   ├── app.test.ts       # HTTP boundary integration tests
-│   ├── index.ts          # Effect startup and shutdown
-│   ├── tools.ts          # Tool registration (registerTools) and logic
-│   ├── tools.test.ts     # Integration tests (in-memory client/server)
-│   ├── config.ts         # Env var loading and validation (Effect Config)
-│   ├── logger.ts         # Effect structured logging
-│   └── lib/
-│       ├── utils.ts      # MCP response helpers
-│       ├── mcp-schema.ts  # Effect Schema → MCP Standard Schema adapter
-│       ├── utils.test.ts # Unit tests
-│       └── mcp-schema.test.ts # Schema adapter and dialect tests
-├── dist/                 # Built output (generated)
-├── tsconfig.json         # TypeScript configuration
-├── vite.config.ts        # Vite build configuration
-├── eslint.config.js      # ESLint configuration
-├── Dockerfile            # Docker configuration
-└── package.json          # Dependencies and scripts
-```
+I wanted to build a general-purpose Beads MCP using [my TypeScript MCP template](https://github.com/nickytonline/mcp-typescript-template): a starting point that anyone can use, adapt, and extend for their own agents and workflows. Beads itself was created by [Steve Yegge](https://github.com/steveyegge).
 
 ## Architecture
 
-This template follows a simple architecture:
-
-- **HTTP Transport** - Uses Express with `createMcpHandler` (`@modelcontextprotocol/server`) for remote MCP connections
-- **Stateless** - Per the MCP 2026-07-28 spec: no session handshake or session ID; the app creates a fresh server per request and supports older clients through the SDK fallback
-- **Tool Registration** - `registerTools(server)` in `src/tools.ts` is the single source of truth for tool wiring; `getServer()` and the tests both use it
-- **Typed I/O** - Effect Schema `inputSchema`/`outputSchema` values adapted to MCP Standard Schema, plus `structuredContent` for typed results
-- **JSON Schema Dialects** - The adapter supports both MCP-requested `draft-07` and `draft-2020-12` output
-- **Error Handling** - Genuine tool execution failures return `isError: true` via `createErrorResult` rather than being thrown; protocol, transport, and capability failures (e.g. an unsupported elicitation) can still reject the client call
-- **Health Check** - `GET /health` is a plain liveness endpoint (used by the Docker health check); `GET /mcp` is routed to the MCP handler itself
-
-## Example: Adding a New Tool
-
-Add the registration inside `registerTools()` in `src/tools.ts`. See the `create-mcp-tool` skill (`.agents/skills/create-mcp-tool`) for the full walkthrough.
-
-```typescript
-import type { CallToolResult, ServerContext } from "@modelcontextprotocol/server";
-import { Effect, Schema } from "effect";
-import { toMcpSchema } from "./lib/mcp-schema.ts";
-import { createTextResult, runMcpEffect } from "./lib/utils.ts";
-
-server.registerTool(
-  "my_tool",
-  {
-    title: "My Custom Tool",
-    description: "Description of what this tool does",
-    inputSchema: toMcpSchema(
-      Schema.Struct({
-        param1: Schema.String,
-        param2: Schema.optional(Schema.Number),
-      }),
-    ),
-    outputSchema: toMcpSchema(Schema.Struct({ output: Schema.String })),
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  },
-  (args, ctx) => runMcpEffect(myTool(args, ctx)),
-);
-
-function myTool(
-  args: { param1: string; param2?: number },
-  _ctx: ServerContext,
-): Effect.Effect<CallToolResult> {
-  return Effect.succeed(createTextResult({ output: args.param1 }));
-}
+```text
+Agents → HTTPS ingress → TypeScript MCP + bd → embedded Dolt on a PVC
 ```
 
-Keep the tool workflow in `Effect` and use `runMcpEffect()` only where it crosses back into the MCP SDK callback API. For asynchronous work, use `Effect.tryPromise`; for independent parallel work, use `Effect.all` with explicit concurrency.
+One server process, one replica, one process-wide FIFO queue for **all** Beads commands, including reads and compound operations. Embedded Dolt is a single-writer store. Do not run another MCP instance, CLI process, or backup job against it concurrently. The queue has a 100-operation admission limit; each CLI subprocess has a 30-second timeout and a 4 MiB output limit. A timeout or invalid output can leave a write's outcome uncertain: inspect the task before retrying.
 
-## Why Express?
+Transport uses the template's stateless Streamable HTTP adapter at `/mcp`. `GET /health` checks process liveness; startup verifies the initialized store before listening. Health does not continuously query the database. Logs omit task inputs and subprocess stderr.
 
-This template uses Express for the HTTP server, which provides:
+## Tools
 
-- **MCP SDK Compatibility** - Full compatibility with `@modelcontextprotocol/server`'s `createMcpHandler`, adapted to Node/Express via `@modelcontextprotocol/node`'s `toNodeHandler`
-- **Mature & Stable** - Battle-tested HTTP server with extensive ecosystem
-- **TypeScript Support** - Excellent TypeScript support with comprehensive type definitions
-- **Middleware Ecosystem** - Rich ecosystem of middleware for common tasks
-- **Documentation** - Comprehensive documentation and community support
-- **Reliability** - Proven reliability for production applications
+| Tool | Purpose |
+| --- | --- |
+| `ready` | List unblocked work, with optional priority/label filters |
+| `search` | Search text and status/assignee/label filters, including closed tasks |
+| `get` | Task details, dependencies, and comment bodies, plus `state_revision`, `activity_revision` and `last_activity_at` |
+| `create` | Task, acceptance criteria, priority, labels, optional parent/prerequisites |
+| `update` | Edit fields, status, or labels; optional `expected_revision` compare-and-swap |
+| `claim` | Native atomic `bd update --claim`, attributed to an actor |
+| `release` | Verify ownership, optionally append a reason, clear assignee, set open |
+| `add_note` | Append a comment |
+| `link` | Add/remove a relationship; for blocks, `id` depends on `target` |
+| `complete` | Close with summary/evidence; respects Beads gates/dependencies |
+| `handoff` | Append structured done/remaining/next context; optionally release |
 
-## Repository Guidelines
+Every write requires an `actor` for attribution. The shared bearer token grants full store access: caller-supplied actors are **not** authenticated identities or a security boundary. Ownership checks prevent accidental cross-agent release, status changes and completion, not a malicious client impersonating another actor. Claims never expire: ownership lasts until `release`, `handoff` with `release`, or `complete`. `update`, `release`, `handoff` and `complete` accept an optional `expected_revision` (the `state_revision` from `get`) for compare-and-swap; without it, writes are last-writer-wins. Compound operations are serialized but are not atomic database transactions; notes may persist if a subsequent release fails. Handoff returns a warning in that case. Results use `{ data: <native Beads JSON> }`; genuine failures have `isError: true` and a body of `{ error, code, retryable, outcome_unknown }`. See [docs/GUARANTEES.md](docs/GUARANTEES.md) for exactly what is guaranteed, what is tested, and what is still unverified.
 
-Contributors should review `AGENTS.md` for project structure, coding standards, and pull request expectations before opening changes.
+## Local development
+
+Requires Node 24+ and Beads CLI 1.3.1 (the container pins this tested release). Use an existing initialized store, or initialize a fresh one:
+
+```sh
+npm ci
+mkdir -p /tmp/beads-project
+cd /tmp/beads-project
+bd init --prefix=task --skip-agents --skip-hooks --non-interactive
+# Return to this repository, then:
+BEADS_PROJECT_DIR=/tmp/beads-project npm run dev
+```
+
+Connect a client to `http://localhost:3000/mcp`. Development allows unauthenticated access unless `MCP_TOKEN` is set. Production refuses to start without it. Use a strong token from your secret manager; pass `Authorization: Bearer <token>` on all MCP requests.
+
+| Environment | Default | Purpose |
+| --- | --- | --- |
+| `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |
+| `BEADS_DIR` | `<project>/.beads` | Store directory; use an absolute path |
+| `BD_BIN` | `bd` | CLI executable |
+| `MCP_TOKEN` | None | Required production bearer token |
+| `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root; k3s sets `/data/dolt-config` |
+| `PORT` | 3000 | HTTP port |
+| `NODE_ENV` | development | Template environment setting |
+| `SERVER_NAME` / `SERVER_VERSION` | package metadata | MCP identity |
+| `LOG_LEVEL` | info | error/warn/info/debug |
+
+The image initializes missing stores at startup using Beads' own `--init-if-missing` check. It then verifies store access before listening. Initialization never forces or deletes existing data. Local startup expects an already initialized store.
+
+## Verification
+
+```sh
+npm run lint
+npm run format:check
+npm run build
+npm run test:ci
+BD_BIN=/path/to/bd npm run test:beads
+```
+
+The opt-in live test initializes an isolated embedded store and exercises all eleven tools through the HTTP MCP transport, including competing claims, ownership, handoff, and dependency unblocking. Normal tests need no installed Beads executable.
+
+## Container and k3s
+
+```sh
+docker build -t <registry>/beads-mcp:0.1.0 .
+```
+
+After building, run `node scripts/smoke-container.mjs <image>` to verify initialization, bearer authentication, tool discovery, and persistence across container replacement. The smoke test requires Docker and the development dependencies and removes its temporary containers and volume.
+
+Build supports linux/amd64 and linux/arm64. The release downloader honors proxy environment variables and verifies the Beads archive against release checksums. For a build environment with a custom proxy CA, pass `--secret id=proxy_ca,src=/path/to/ca.pem`. TLS verification stays enabled.
+
+[Deployment resources](deploy/k3s/resources.yaml) provide a namespace, PVC, one-replica Recreate deployment, and Service. Replace the image reference and create `beads-mcp-auth` with key `token` using your cluster's secret workflow. [Ingress example](deploy/k3s/ingress.example.yaml) requires your hostname, ingress class, and provisioned TLS secret. No secret values are shipped.
+
+Adapt the example manifests to your cluster's conventions before applying them. No cluster resources are applied by this repository.
+
+Back up with `bd backup` during exclusive maintenance access; stop the MCP and wait for its pod to terminate before accessing embedded storage. Preserve the PVC. `.beads/issues.jsonl` is an export, not the source of truth or a backup. Do not concurrently mount the store in a backup CronJob. Beads' [Dolt guide](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md) covers storage and migration.
+
+## Running multiple MCP replicas
+
+The shipped container entrypoint and Kubernetes manifests use **embedded mode** and support **one replica**. Increasing `replicas` or adding an HPA against the embedded store is not supported. The in-process queue coordinates requests inside one pod only.
+
+For multiple replicas, use Beads **server mode**:
+
+```text
+Agents → HTTPS ingress → MCP pods (each with bd) → Dolt SQL service → database PVC
+```
+
+Set up a separate, persistent `dolt sql-server` service. Each MCP pod runs its own TypeScript server and `bd` executable, configured to connect to the **same database**. The database PVC belongs to the Dolt service; MCP pods must not share an embedded database directory. Multiple MCP replicas do not by themselves make Dolt highly available.
+
+Before enabling replicas:
+
+1. Stop the embedded deployment and back up with `bd backup`. Follow the pinned Beads version's migration/restore procedure to move the existing data into server mode. Verify task counts, dependencies, and claims before retiring the original volume.
+2. Replace the embedded initialization in `scripts/entrypoint.sh` with server-mode setup using `bd init --server` and the appropriate `--server-host`, `--server-port`, and `--server-user` settings. Provision the shared database once; subsequent pods should open its existing state. Configure database credentials and TLS through Beads' supported settings and your cluster's secret management. Each pod needs its own workspace/configuration, pointing to that same database.
+3. Adapt the Kubernetes manifests for the external Dolt service and per-pod configuration. Remove the shared embedded-store volume from MCP pods, then configure multiple replicas and an appropriate rollout strategy. Keep database access private to the cluster.
+4. Make ownership-sensitive compound operations safe across pods. `release` and `handoff` currently check the assignee and then perform separate writes under a **local** queue. That check can become stale when another pod writes concurrently; use database-backed conditional operations or distributed coordination before promising ownership enforcement across replicas. Native Beads atomic claims remain the primitive for `claim`.
+5. Test competing claims, concurrent updates, release/handoff races, pod replacement, and database backup/restore against the shared server before routing production traffic to multiple replicas.
+
+This is the upgrade path, not a server-mode deployment included in the current release. See Beads' [Dolt backend guide](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md) for connection, storage, and migration details.

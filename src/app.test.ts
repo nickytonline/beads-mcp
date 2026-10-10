@@ -1,6 +1,9 @@
 import { createServer, type Server as HttpServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { createApp } from "./app.ts";
 
 type AppHarness = {
@@ -29,8 +32,8 @@ function closeHttpServer(server: HttpServer): Promise<void> {
   });
 }
 
-async function setupHttpServer() {
-  const { app, handler } = createApp();
+async function setupHttpServer(token?: string) {
+  const { app, handler } = createApp({ token });
   const httpServer = createServer(app);
 
   await new Promise<void>((resolve, reject) => {
@@ -53,10 +56,7 @@ async function setupHttpServer() {
 
 async function setupHttpClient() {
   const appHarness = await setupHttpServer();
-  const client = new Client(
-    { name: "test-client", version: "0.0.0" },
-    {},
-  );
+  const client = new Client({ name: "test-client", version: "0.0.0" }, {});
   const transport = new StreamableHTTPClientTransport(
     new URL(`${appHarness.baseUrl}/mcp`),
   );
@@ -79,13 +79,34 @@ describe("HTTP app", () => {
   it("serves MCP requests through Express and the Node adapter", async () => {
     const { client } = await setupHttpClient();
 
-    const result = await client.callTool({
-      name: "echo",
-      arguments: { message: "over HTTP" },
-    });
+    const result = await client.listTools();
+    expect(result.tools.some((tool) => tool.name === "ready")).toBe(true);
+  });
 
-    expect(result.structuredContent).toEqual({ echo: "over HTTP" });
-    expect(result.isError).toBeFalsy();
+  it("requires the configured bearer token while leaving liveness public", async () => {
+    const { baseUrl } = await setupHttpServer("test-secret");
+    expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+    expect((await fetch(`${baseUrl}/mcp`, { method: "POST" })).status).toBe(
+      401,
+    );
+    expect(
+      (
+        await fetch(`${baseUrl}/mcp`, {
+          method: "POST",
+          headers: { authorization: "Bearer wrong" },
+        })
+      ).status,
+    ).toBe(401);
+    const response = await fetch(`${baseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-secret",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(response.status).toBe(200);
   });
 
   it("returns a client error for malformed JSON", async () => {
