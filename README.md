@@ -91,6 +91,20 @@ After building, run `node scripts/smoke-container.mjs <image>` to verify initial
 
 Build supports linux/amd64 and linux/arm64. The release downloader honors proxy environment variables and verifies the Beads archive against release checksums. For a build environment with a custom proxy CA, pass `--secret id=proxy_ca,src=/path/to/ca.pem`. TLS verification stays enabled.
 
+### Cloudflare DNS with Pomerium Zero
+
+If Cloudflare proxies the custom-domain wildcard, keep the wildcard record pointed at the Pomerium Zero starter domain and add an explicit, DNS-only ACME delegation. The ACME record is needed because Cloudflare proxying does not expose the wildcard CNAME for the DNS-01 challenge lookup.
+
+For a custom domain such as `example.com`, configure:
+
+```text
+*.example.com               CNAME  <cluster-starter-domain>.pomerium.app                    Proxied
+_acme-challenge.example.com CNAME  _acme-challenge.<cluster-starter-domain>.pomerium.app  DNS only
+ssh.example.com             CNAME  <cluster-starter-domain>.pomerium.app                    DNS only
+```
+
+Replace `<cluster-starter-domain>` with the starter domain shown by Pomerium Zero. Verify the ACME delegation with `dig +short CNAME _acme-challenge.example.com`. Keep the wildcard proxied only if the Kubernetes Pomerium Service allows Cloudflare source ranges; if the wildcard is DNS-only, the service must allow the Pomerium Zero edge instead. Do not proxy SSH through Cloudflare's normal HTTP proxy.
+
 Back up with `bd backup` during exclusive maintenance access; stop the MCP and wait for its pod to terminate before accessing embedded storage. Preserve the PVC. `.beads/issues.jsonl` is an export, not the source of truth or a backup. Do not concurrently mount the store in a backup CronJob. Beads' [Dolt guide](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md) covers storage and migration.
 
 ## Running multiple MCP replicas
