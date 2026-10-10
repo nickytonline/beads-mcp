@@ -6,6 +6,14 @@ import {
 } from "@modelcontextprotocol/client";
 import { createApp } from "./app.ts";
 
+vi.hoisted(() => {
+  process.env.AUTH_JWT_HEADER = "X-Authenticated-JWT";
+  process.env.AUTH_JWKS_URL = "https://issuer.example.test/keys";
+  process.env.AUTH_ISSUER = "https://issuer.example.test/";
+  process.env.AUTH_AUDIENCE = "beads-mcp";
+  process.env.AUTH_ACTOR_CLAIM = "email";
+});
+
 type AppHarness = {
   httpServer: HttpServer;
   handler: ReturnType<typeof createApp>["handler"];

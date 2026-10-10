@@ -1,8 +1,6 @@
 import { Effect, LogLevel, Logger } from "effect";
 import { getConfig } from "./config.ts";
 
-const config = getConfig();
-
 type LogFields = Readonly<Record<string, unknown>>;
 type LogInput = LogFields | string;
 
@@ -20,6 +18,7 @@ function log(
   fieldsOrMessage: LogInput,
   message?: string,
 ) {
+  const config = getConfig();
   const fields = typeof fieldsOrMessage === "string" ? {} : fieldsOrMessage;
   const text =
     typeof fieldsOrMessage === "string" ? fieldsOrMessage : (message ?? "");
