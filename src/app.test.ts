@@ -1,5 +1,5 @@
 import { createServer, type Server as HttpServer } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -15,6 +15,14 @@ type AppHarness = {
 
 let harness: AppHarness | undefined;
 
+beforeEach(() => {
+  vi.stubEnv("AUTH_JWT_HEADER", "X-Authenticated-JWT");
+  vi.stubEnv("AUTH_JWKS_URL", "https://issuer.example.test/keys");
+  vi.stubEnv("AUTH_ISSUER", "https://issuer.example.test/");
+  vi.stubEnv("AUTH_AUDIENCE", "beads-mcp");
+  vi.stubEnv("AUTH_ACTOR_CLAIM", "email");
+});
+
 afterEach(async () => {
   if (!harness) return;
 
@@ -24,6 +32,7 @@ afterEach(async () => {
   await harness.handler.close();
   await closeHttpServer(harness.httpServer);
   harness = undefined;
+  vi.unstubAllEnvs();
 });
 
 function closeHttpServer(server: HttpServer): Promise<void> {
@@ -32,8 +41,17 @@ function closeHttpServer(server: HttpServer): Promise<void> {
   });
 }
 
-async function setupHttpServer(token?: string) {
-  const { app, handler } = createApp({ token });
+async function setupHttpServer() {
+  const { app, handler } = createApp({
+    jwtVerifier: async (token) => {
+      if (token !== "valid-jwt") throw new Error("invalid token");
+      return {
+        actor: "alice@example.com",
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+        payload: { email: "alice@example.com" },
+      };
+    },
+  });
   const httpServer = createServer(app);
 
   await new Promise<void>((resolve, reject) => {
@@ -59,6 +77,7 @@ async function setupHttpClient() {
   const client = new Client({ name: "test-client", version: "0.0.0" }, {});
   const transport = new StreamableHTTPClientTransport(
     new URL(`${appHarness.baseUrl}/mcp`),
+    { requestInit: { headers: { "X-Authenticated-JWT": "valid-jwt" } } },
   );
 
   await client.connect(transport);
@@ -83,8 +102,8 @@ describe("HTTP app", () => {
     expect(result.tools.some((tool) => tool.name === "ready")).toBe(true);
   });
 
-  it("requires the configured bearer token while leaving liveness public", async () => {
-    const { baseUrl } = await setupHttpServer("test-secret");
+  it("requires a valid identity JWT while leaving liveness public", async () => {
+    const { baseUrl } = await setupHttpServer();
     expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
     expect((await fetch(`${baseUrl}/mcp`, { method: "POST" })).status).toBe(
       401,
@@ -93,14 +112,14 @@ describe("HTTP app", () => {
       (
         await fetch(`${baseUrl}/mcp`, {
           method: "POST",
-          headers: { authorization: "Bearer wrong" },
+          headers: { "X-Authenticated-JWT": "invalid-jwt" },
         })
       ).status,
     ).toBe(401);
     const response = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
       headers: {
-        authorization: "Bearer test-secret",
+        "X-Authenticated-JWT": "valid-jwt",
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
       },
@@ -114,7 +133,10 @@ describe("HTTP app", () => {
 
     const response = await fetch(`${baseUrl}/mcp`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "X-Authenticated-JWT": "valid-jwt",
+        "content-type": "application/json",
+      },
       body: "{",
     });
 

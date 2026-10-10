@@ -34,7 +34,7 @@ Transport uses the template's stateless Streamable HTTP adapter at `/mcp`. `GET 
 | `complete` | Close with summary/evidence; respects Beads gates/dependencies |
 | `handoff` | Append structured done/remaining/next context; optionally release |
 
-Every write requires an `actor` for attribution. The shared bearer token grants full store access: caller-supplied actors are **not** authenticated identities or a security boundary. Ownership checks prevent accidental cross-agent release, status changes and completion, not a malicious client impersonating another actor. Claims never expire: ownership lasts until `release`, `handoff` with `release`, or `complete`. `update`, `release`, `handoff` and `complete` accept an optional `expected_revision` (the `state_revision` from `get`) for compare-and-swap; without it, writes are last-writer-wins. Compound operations are serialized but are not atomic database transactions; notes may persist if a subsequent release fails. Handoff returns a warning in that case. Results use `{ data: <native Beads JSON> }`; genuine failures have `isError: true` and a body of `{ error, code, retryable, outcome_unknown }`. See [docs/GUARANTEES.md](docs/GUARANTEES.md) for exactly what is guaranteed, what is tested, and what is still unverified.
+Every request to `/mcp` requires a verified signed JWT. The authenticated actor is derived from the configured claim (normally `email`, falling back to `sub`) and is used for every write; optional `actor` fields remain only for client compatibility and are ignored for authenticated HTTP requests. Claims never expire: ownership lasts until `release`, `handoff` with `release`, or `complete`. `update`, `release`, `handoff` and `complete` accept an optional `expected_revision` (the `state_revision` from `get`) for compare-and-swap; without it, writes are last-writer-wins. Compound operations are serialized but are not atomic database transactions; notes may persist if a subsequent release fails. Handoff returns a warning in that case. Results use `{ data: <native Beads JSON> }`; genuine failures have `isError: true` and a body of `{ error, code, retryable, outcome_unknown }`. See [docs/GUARANTEES.md](docs/GUARANTEES.md) for exactly what is guaranteed, what is tested, and what is still unverified.
 
 ## Local development
 
@@ -49,19 +49,23 @@ bd init --prefix=task --skip-agents --skip-hooks --non-interactive
 BEADS_PROJECT_DIR=/tmp/beads-project npm run dev
 ```
 
-Connect a client to `http://localhost:3000/mcp`. Development allows unauthenticated access unless `MCP_TOKEN` is set. Production refuses to start without it. Use a strong token from your secret manager; pass `Authorization: Bearer <token>` on all MCP requests.
+Connect a client to `http://localhost:3000/mcp` and send a signed JWT in the configured identity header. The server verifies the JWT signature using the configured JWKS URL and validates issuer, audience, and expiration in every environment.
 
 | Environment | Default | Purpose |
 | --- | --- | --- |
 | `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |
 | `BEADS_DIR` | `<project>/.beads` | Store directory; use an absolute path |
 | `BD_BIN` | `bd` | CLI executable |
-| `MCP_TOKEN` | None | Required production bearer token |
 | `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root; k3s sets `/data/dolt-config` |
 | `PORT` | 3000 | HTTP port |
 | `NODE_ENV` | development | Template environment setting |
 | `SERVER_NAME` / `SERVER_VERSION` | package metadata | MCP identity |
 | `LOG_LEVEL` | info | error/warn/info/debug |
+| `AUTH_JWT_HEADER` | `X-Authenticated-JWT` | Header carrying the signed JWT; `Bearer` prefixes are accepted |
+| `AUTH_JWKS_URL` | Required | JWKS endpoint used to verify signatures |
+| `AUTH_ISSUER` | Required | Expected JWT issuer |
+| `AUTH_AUDIENCE` | Required | Expected JWT audience |
+| `AUTH_ACTOR_CLAIM` | `email` | JWT claim used for Beads attribution, falling back to `sub` |
 
 The image initializes missing stores at startup using Beads' own `--init-if-missing` check. It then verifies store access before listening. Initialization never forces or deletes existing data. Local startup expects an already initialized store.
 
@@ -83,11 +87,11 @@ The opt-in live test initializes an isolated embedded store and exercises all el
 docker build -t <registry>/beads-mcp:0.1.0 .
 ```
 
-After building, run `node scripts/smoke-container.mjs <image>` to verify initialization, bearer authentication, tool discovery, and persistence across container replacement. The smoke test requires Docker and the development dependencies and removes its temporary containers and volume.
+After building, run `node scripts/smoke-container.mjs <image>` to verify initialization, JWT authentication, tool discovery, actor attribution, and persistence across container replacement. The smoke test requires Docker and the development dependencies and removes its temporary containers and volume.
 
 Build supports linux/amd64 and linux/arm64. The release downloader honors proxy environment variables and verifies the Beads archive against release checksums. For a build environment with a custom proxy CA, pass `--secret id=proxy_ca,src=/path/to/ca.pem`. TLS verification stays enabled.
 
-[Deployment resources](deploy/k3s/resources.yaml) provide a namespace, PVC, one-replica Recreate deployment, and Service. Replace the image reference and create `beads-mcp-auth` with key `token` using your cluster's secret workflow. [Ingress example](deploy/k3s/ingress.example.yaml) requires your hostname, ingress class, and provisioned TLS secret. No secret values are shipped.
+[Deployment resources](deploy/k3s/resources.yaml) provide a namespace, PVC, one-replica Recreate deployment, and Service. Configure the JWT environment variables through your deployment's configuration and secret-management workflow. [Ingress example](deploy/k3s/ingress.example.yaml) requires your hostname, ingress class, and provisioned TLS secret. No secret values are shipped.
 
 Adapt the example manifests to your cluster's conventions before applying them. No cluster resources are applied by this repository.
 

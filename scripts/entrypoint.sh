@@ -1,6 +1,5 @@
 #!/bin/sh
 set -eu
-: "${MCP_TOKEN:?MCP_TOKEN must be configured}"
 : "${BEADS_PROJECT_DIR:=/data/project}"
 : "${BEADS_DIR:=$BEADS_PROJECT_DIR/.beads}"
 export BEADS_PROJECT_DIR BEADS_DIR

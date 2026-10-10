@@ -21,10 +21,14 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function setup() {
+async function setup(authenticatedActor?: string) {
   const fake = createFakeBd();
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(server, new BeadsClient(fake.run).transaction);
+  registerTools(
+    server,
+    new BeadsClient(fake.run).transaction,
+    authenticatedActor,
+  );
   const client = new Client({ name: "test", version: "0.0.0" });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);
@@ -56,6 +60,17 @@ async function setup() {
 }
 
 describe("change detection", () => {
+  it("uses the verified actor instead of a compatibility actor field", async () => {
+    const { call, create, fake } = await setup("verified@example.com");
+    const id = await create({ actor: "spoofed@example.com" });
+
+    await call("claim", { id, actor: "spoofed@example.com" });
+    await call("add_note", { id, actor: "spoofed@example.com", note: "note" });
+
+    expect(fake.peek(id)?.assignee).toBe("verified@example.com");
+    expect(fake.peek(id)?.comments?.[0]?.author).toBe("verified@example.com");
+  });
+
   it("advances activity_revision for a note even though bd's updated_at does not", async () => {
     const { call, create, get } = await setup();
     const id = await create();

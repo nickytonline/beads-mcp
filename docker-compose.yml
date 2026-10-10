@@ -4,7 +4,11 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      MCP_TOKEN: ${MCP_TOKEN:?Set MCP_TOKEN before starting Compose}
+      AUTH_JWT_HEADER: ${AUTH_JWT_HEADER:-X-Authenticated-JWT}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:?Set AUTH_JWKS_URL before starting Compose}
+      AUTH_ISSUER: ${AUTH_ISSUER:?Set AUTH_ISSUER before starting Compose}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:?Set AUTH_AUDIENCE before starting Compose}
+      AUTH_ACTOR_CLAIM: ${AUTH_ACTOR_CLAIM:-email}
       DOLT_ROOT_PATH: /data/dolt-config
     volumes:
       - beads-data:/data

@@ -161,7 +161,7 @@ To build your own MCP server from this template:
 - `src/beads.ts` owns the process-wide queue, shared across stateless requests. Queue all CLI access, including reads and compound operations.
 - Execute `bd` with argument arrays and no shell; never accept arbitrary commands or filesystem paths from tool inputs.
 - Keep one process and one replica for embedded mode. Do not run direct CLI/backup access concurrently. See README.md, "Running multiple MCP replicas", before changing storage mode or replica count; local queues do not coordinate ownership checks across pods.
-- Require a bearer token in production. Actor inputs are attribution, not authenticated identity.
+- Require a verified signed JWT for `/mcp` in every environment. Derive the Beads actor from the configured JWT claim; actor inputs are compatibility fields, not authenticated identity.
 - Claims never expire and there are no leases; do not advertise lease behavior. `lease_expires_at` and `heartbeat_at` from `bd` are stripped from responses.
 - Optimistic concurrency is opt-in: `update`, `release`, `handoff` and `complete` take `expected_revision` (the `state_revision` from `get`). Without it writes are last-writer-wins. Keep `docs/GUARANTEES.md` and the tool descriptions in sync with the code, and do not claim guarantees that no test covers.
 - Live verification: `BD_BIN=/path/to/bd npm run test:beads`; default tests skip it.

@@ -20,6 +20,21 @@ const configEffect = EffectConfig.all({
     "info",
     "debug",
   )("LOG_LEVEL").pipe(EffectConfig.withDefault("info")),
+  AUTH_JWT_HEADER: EffectConfig.string("AUTH_JWT_HEADER").pipe(
+    EffectConfig.withDefault("X-Authenticated-JWT"),
+  ),
+  AUTH_JWKS_URL: EffectConfig.string("AUTH_JWKS_URL").pipe(
+    EffectConfig.withDefault(""),
+  ),
+  AUTH_ISSUER: EffectConfig.string("AUTH_ISSUER").pipe(
+    EffectConfig.withDefault(""),
+  ),
+  AUTH_AUDIENCE: EffectConfig.string("AUTH_AUDIENCE").pipe(
+    EffectConfig.withDefault(""),
+  ),
+  AUTH_ACTOR_CLAIM: EffectConfig.string("AUTH_ACTOR_CLAIM").pipe(
+    EffectConfig.withDefault("email"),
+  ),
 });
 
 export type Config =

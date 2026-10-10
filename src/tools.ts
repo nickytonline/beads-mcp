@@ -1,6 +1,7 @@
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { Effect, Schema } from "effect";
 import { beads, type BeadsCommand, type BeadsTransaction } from "./beads.ts";
+import { normalizeActor } from "./auth.ts";
 import { BeadsError, errorPayload } from "./errors.ts";
 import { toMcpSchema } from "./lib/mcp-schema.ts";
 import {
@@ -25,7 +26,7 @@ const id = text("Full Beads issue ID").pipe(
   Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
 );
 const actor = text(
-  "Stable agent identity for attribution, e.g. codex-worker-1; not an authentication credential",
+  "Optional compatibility actor; authenticated requests use the verified identity",
 ).pipe(Schema.maxLength(128), Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/));
 const priority = Schema.Int.pipe(Schema.between(0, 4)).annotations({
   description: "Priority: 0 highest, 4 lowest",
@@ -42,6 +43,7 @@ const limit = Schema.optional(
   }),
 );
 const opt = Schema.optional;
+const optionalActor = opt(actor);
 const expectedRevision = opt(
   text(
     "state_revision from get. If the task changed since you read it, the write is rejected with REVISION_CONFLICT and nothing is modified. Omit for last-writer-wins.",
@@ -71,6 +73,21 @@ function flags(args: Record<string, unknown>, names: string[]): string[] {
 function firstIssue(result: unknown): Issue | undefined {
   const issue = Array.isArray(result) ? result[0] : result;
   return issue && typeof issue === "object" ? (issue as Issue) : undefined;
+}
+
+function effectiveActor(
+  args: { actor?: string },
+  authenticatedActor?: string,
+): string {
+  const value = normalizeActor(authenticatedActor ?? args.actor);
+  if (!value) {
+    throw new BeadsError(
+      "INVALID_INPUT",
+      "An authenticated actor is required",
+      { retryable: false },
+    );
+  }
+  return value;
 }
 
 /** Read the task inside the caller's queue job; absent tasks are NOT_FOUND. */
@@ -162,13 +179,18 @@ async function assertOwner(
 export function registerTools(
   server: McpServer,
   transaction: BeadsTransaction = beads.transaction,
+  authenticatedActor?: string,
 ): void {
   function register<A extends Record<string, unknown>>(
     name: string,
     description: string,
     inputSchema: Schema.Schema<A, A, never>,
     readOnly: boolean,
-    execute: (args: A, run: BeadsCommand) => Promise<unknown>,
+    execute: (
+      args: A,
+      run: BeadsCommand,
+      authenticatedActor?: string,
+    ) => Promise<unknown>,
     additive = false,
   ) {
     server.registerTool(
@@ -188,7 +210,8 @@ export function registerTools(
         runMcpEffect(
           Effect.gen(function* () {
             const data = yield* Effect.tryPromise({
-              try: () => transaction((run) => execute(args, run)),
+              try: () =>
+                transaction((run) => execute(args, run, authenticatedActor)),
               catch: (error) => error,
             }).pipe(
               Effect.tapError((error) =>
@@ -293,7 +316,7 @@ export function registerTools(
     Schema.Struct({
       ...issueFields,
       title: text("Task title"),
-      actor,
+      actor: optionalActor,
       type: opt(
         Schema.Literal("task", "bug", "feature", "epic", "chore", "decision"),
       ),
@@ -317,7 +340,7 @@ export function registerTools(
             "deps",
           ]),
         ],
-        args.actor,
+        effectiveActor(args, authenticatedActor),
       ),
     true,
   );
@@ -327,7 +350,7 @@ export function registerTools(
     "Edit task fields. Pass expected_revision (state_revision from get) for compare-and-swap: a stale value fails with REVISION_CONFLICT and changes nothing. Without it the write is last-writer-wins. Changing status of a task claimed by another actor fails with OWNERSHIP_CONFLICT.",
     Schema.Struct({
       id,
-      actor,
+      actor: optionalActor,
       ...issueFields,
       status: opt(status),
       "add-label": opt(text("Comma-separated labels to add")),
@@ -335,7 +358,8 @@ export function registerTools(
       expected_revision: expectedRevision,
     }),
     false,
-    async (args, run) => {
+    async (args, run, authenticatedActor) => {
+      const writer = effectiveActor(args, authenticatedActor);
       const edits = flags(args, [
         "title",
         "description",
@@ -351,19 +375,23 @@ export function registerTools(
           "Provide at least one field to update",
           { retryable: false },
         );
-      const issue = await readIssue(run, args.id, args.actor);
+      const issue = await readIssue(run, args.id, writer);
       assertRevision(issue, args.expected_revision);
-      if (args.status !== undefined) assertNotClaimedByOther(issue, args.actor);
-      return run(["update", args.id, ...edits], args.actor);
+      if (args.status !== undefined) assertNotClaimedByOther(issue, writer);
+      return run(["update", args.id, ...edits], writer);
     },
   );
 
   register(
     "claim",
     "Atomically claim a task as actor and set in_progress. A claim by a different actor fails with OWNERSHIP_CONFLICT. Claims never expire: ownership lasts until release, handoff with release, or complete. Re-claiming your own task is a no-op.",
-    Schema.Struct({ id, actor }),
+    Schema.Struct({ id, actor: optionalActor }),
     false,
-    (args, run) => run(["update", args.id, "--claim"], args.actor),
+    (args, run, authenticatedActor) =>
+      run(
+        ["update", args.id, "--claim"],
+        effectiveActor(args, authenticatedActor),
+      ),
   );
 
   register(
@@ -371,19 +399,17 @@ export function registerTools(
     "Release your own claim and return the task to open. Optionally append a reason first.",
     Schema.Struct({
       id,
-      actor,
+      actor: optionalActor,
       reason: opt(text("Reason for releasing")),
       expected_revision: expectedRevision,
     }),
     false,
-    async (args, run) => {
-      await assertOwner(run, args.id, args.actor, args.expected_revision);
+    async (args, run, authenticatedActor) => {
+      const writer = effectiveActor(args, authenticatedActor);
+      await assertOwner(run, args.id, writer, args.expected_revision);
       if (args.reason)
-        await run(["comments", "add", args.id, "--", args.reason], args.actor);
-      return run(
-        ["update", args.id, "--assignee=", "--status=open"],
-        args.actor,
-      );
+        await run(["comments", "add", args.id, "--", args.reason], writer);
+      return run(["update", args.id, "--assignee=", "--status=open"], writer);
     },
   );
 
@@ -392,12 +418,15 @@ export function registerTools(
     "Append findings, decisions, blockers, or evidence URLs to a task's comments.",
     Schema.Struct({
       id,
-      actor,
+      actor: optionalActor,
       note: text("Comment body; include artifact URLs when relevant"),
     }),
     false,
-    (args, run) =>
-      run(["comments", "add", args.id, "--", args.note], args.actor),
+    (args, run, authenticatedActor) =>
+      run(
+        ["comments", "add", args.id, "--", args.note],
+        effectiveActor(args, authenticatedActor),
+      ),
     true,
   );
 
@@ -407,7 +436,7 @@ export function registerTools(
     Schema.Struct({
       id,
       target: id,
-      actor,
+      actor: optionalActor,
       action: Schema.Literal("add", "remove"),
       type: opt(
         Schema.Literal(
@@ -421,7 +450,8 @@ export function registerTools(
       ),
     }),
     false,
-    (args, run) => {
+    (args, run, authenticatedActor) => {
+      const writer = effectiveActor(args, authenticatedActor);
       if (args.action === "remove" && args.type)
         throw new Error("Remove identifies the edge by its two IDs; omit type");
       return run(
@@ -432,7 +462,7 @@ export function registerTools(
           args.target,
           ...(args.action === "add" ? [`--type=${args.type ?? "blocks"}`] : []),
         ],
-        args.actor,
+        writer,
       );
     },
   );
@@ -442,16 +472,17 @@ export function registerTools(
     "Close a task with a result summary and evidence. Does not force unresolved dependencies or gates. Fails with OWNERSHIP_CONFLICT if another actor holds the claim.",
     Schema.Struct({
       id,
-      actor,
+      actor: optionalActor,
       summary: text("Result summary, including evidence or artifact URLs"),
       expected_revision: expectedRevision,
     }),
     false,
-    async (args, run) => {
-      const issue = await readIssue(run, args.id, args.actor);
+    async (args, run, authenticatedActor) => {
+      const writer = effectiveActor(args, authenticatedActor);
+      const issue = await readIssue(run, args.id, writer);
       assertRevision(issue, args.expected_revision);
-      assertNotClaimedByOther(issue, args.actor);
-      return run(["close", args.id, `--reason=${args.summary}`], args.actor);
+      assertNotClaimedByOther(issue, writer);
+      return run(["close", args.id, `--reason=${args.summary}`], writer);
     },
   );
 
@@ -460,7 +491,7 @@ export function registerTools(
     "Append a structured handoff to your claimed task; optionally release it. Note and release are sequential, not a database transaction. If release fails, the note remains.",
     Schema.Struct({
       id,
-      actor,
+      actor: optionalActor,
       done: text("Work completed"),
       remaining: text("Work still needed"),
       next: text("Next concrete action"),
@@ -472,8 +503,9 @@ export function registerTools(
       expected_revision: expectedRevision,
     }),
     false,
-    async (args, run) => {
-      await assertOwner(run, args.id, args.actor, args.expected_revision);
+    async (args, run, authenticatedActor) => {
+      const writer = effectiveActor(args, authenticatedActor);
+      await assertOwner(run, args.id, writer, args.expected_revision);
       const note = await run(
         [
           "comments",
@@ -482,13 +514,13 @@ export function registerTools(
           "--",
           JSON.stringify({
             kind: "handoff",
-            actor: args.actor,
+            actor: writer,
             done: args.done,
             remaining: args.remaining,
             next: args.next,
           }),
         ],
-        args.actor,
+        writer,
       );
       if (!args.release) return { note };
       try {
@@ -496,7 +528,7 @@ export function registerTools(
           note,
           task: await run(
             ["update", args.id, "--assignee=", "--status=open"],
-            args.actor,
+            writer,
           ),
         };
       } catch {

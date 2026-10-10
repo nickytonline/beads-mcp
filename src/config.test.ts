@@ -24,6 +24,14 @@ describe("configuration", () => {
     vi.stubEnv("SERVER_NAME", undefined);
     vi.stubEnv("SERVER_VERSION", undefined);
     vi.stubEnv("LOG_LEVEL", undefined);
+    vi.stubEnv("AUTH_JWT_HEADER", undefined);
+    vi.stubEnv(
+      "AUTH_JWKS_URL",
+      "https://issuer.example.test/.well-known/jwks.json",
+    );
+    vi.stubEnv("AUTH_ISSUER", "https://issuer.example.test/");
+    vi.stubEnv("AUTH_AUDIENCE", "beads-mcp");
+    vi.stubEnv("AUTH_ACTOR_CLAIM", undefined);
 
     const { getConfig } = await importConfig();
 
@@ -33,6 +41,11 @@ describe("configuration", () => {
       SERVER_NAME: "from-package-json",
       SERVER_VERSION: "9.9.9",
       LOG_LEVEL: "info",
+      AUTH_JWT_HEADER: "X-Authenticated-JWT",
+      AUTH_JWKS_URL: "https://issuer.example.test/.well-known/jwks.json",
+      AUTH_ISSUER: "https://issuer.example.test/",
+      AUTH_AUDIENCE: "beads-mcp",
+      AUTH_ACTOR_CLAIM: "email",
     });
   });
 
@@ -42,6 +55,11 @@ describe("configuration", () => {
     vi.stubEnv("SERVER_NAME", "custom-server");
     vi.stubEnv("SERVER_VERSION", "2.0.0");
     vi.stubEnv("LOG_LEVEL", "debug");
+    vi.stubEnv("AUTH_JWT_HEADER", "X-Identity");
+    vi.stubEnv("AUTH_JWKS_URL", "https://issuer.example.test/keys");
+    vi.stubEnv("AUTH_ISSUER", "issuer");
+    vi.stubEnv("AUTH_AUDIENCE", "audience");
+    vi.stubEnv("AUTH_ACTOR_CLAIM", "preferred_username");
 
     const { getConfig } = await importConfig();
 
@@ -51,6 +69,11 @@ describe("configuration", () => {
       SERVER_NAME: "custom-server",
       SERVER_VERSION: "2.0.0",
       LOG_LEVEL: "debug",
+      AUTH_JWT_HEADER: "X-Identity",
+      AUTH_JWKS_URL: "https://issuer.example.test/keys",
+      AUTH_ISSUER: "issuer",
+      AUTH_AUDIENCE: "audience",
+      AUTH_ACTOR_CLAIM: "preferred_username",
     });
   });
 

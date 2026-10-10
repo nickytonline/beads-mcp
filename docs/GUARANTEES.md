@@ -20,13 +20,14 @@ Scope: one MCP process, one replica, embedded Dolt (the shipped configuration).
   `OWNERSHIP_CONFLICT`. Editing other fields, adding labels, and adding notes
   stay open to everyone.
 
-### Not guaranteed: identity
+### Identity authentication
 
-`actor` is a caller-supplied attribution string, not an authenticated identity.
-Anyone holding the bearer token can pass any `actor`, including another agent's.
-Ownership checks prevent accidents between cooperating agents. They do not stop
-impersonation. Real per-identity ownership needs the actor derived from an
-authenticated principal at the transport layer, which this server does not do.
+HTTP `/mcp` requests require a signed JWT. The signature is verified against the
+configured JWKS URL, and issuer, audience, and expiration are validated. The
+Beads actor is normalized from the configured JWT claim, falling back to `sub`.
+Caller-supplied `actor` fields remain in tool schemas for compatibility, but
+authenticated HTTP writes always use the verified actor from request context.
+`/health` is intentionally unauthenticated.
 
 ## Concurrency
 
@@ -111,8 +112,10 @@ during a crash may or may not have been applied, which is what
   before trusting `NOT_FOUND`, `OWNERSHIP_CONFLICT` and `DEPENDENCY_CYCLE` in
   production. Unmatched failures degrade safely to `INTERNAL` with an uncertain
   outcome.
-- Behaviour with two separately authenticated identities. There is no
-  authentication layer in this repository to test against.
+- Behaviour with two separately authenticated identities through a production
+  identity provider. JWT signature and claim validation are covered by
+  `src/auth.test.ts`; the container smoke test uses a temporary signed JWT and
+  JWKS endpoint.
 - Behaviour after a `bd` lease would have expired, from a second identity.
 - Multi-replica deployments, Dolt server mode, and failures mid-write.
 - Durability over hours or days. A separate recheck is scheduled.
