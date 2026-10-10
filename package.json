@@ -1,0 +1,59 @@
+{
+  "name": "mcp-typescript-template",
+  "version": "1.0.0",
+  "description": "TypeScript template for building MCP servers",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "prebuild": "npm run typecheck",
+    "build": "vite build",
+    "dev": "node --watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "test:ci": "vitest run --reporter=json --outputFile=test-results.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts"
+  },
+  "keywords": [
+    "mcp",
+    "typescript",
+    "template",
+    "vite",
+    "server"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@semantic-release/changelog": "^7.0.0",
+    "@semantic-release/git": "^11.0.1",
+    "@types/node": "^22.20.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.49.0",
+    "concurrently": "^10.0.4",
+    "conventional-changelog-conventionalcommits": "^10.2.1",
+    "eslint": "^10.8.0",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "semantic-release": "^25.0.5",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@types/express": "^5.0.6",
+    "effect": "^3.22.2",
+    "express": "^5.2.1"
+  }
+}

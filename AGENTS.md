@@ -1,0 +1,149 @@
+# Repository Guidelines
+
+TypeScript template for building [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers over HTTP.
+
+## Key Commands
+
+```bash
+# Development (hot reload via native Node.js type stripping)
+npm run dev
+
+# Build (Vite → ES modules in dist/)
+npm run build
+
+# Production
+npm start
+
+# Lint & format
+npm run lint
+npm run lint:fix
+npm run format
+npm run format:check
+
+# Tests
+npm run test       # interactive Vitest
+npm run test:ci    # outputs test-results.json
+```
+
+## Before Submitting
+
+Always run these and fix any failures before opening a PR:
+
+```bash
+npm run lint && npm run format:check && npm run build && npm run test:ci
+```
+
+## Project Structure
+
+```
+src/
+  app.ts         # Express app and MCP Node adapter wiring
+  app.test.ts    # HTTP boundary integration tests
+  index.ts       # Effect startup and shutdown; runs the app on PORT
+  tools.ts       # registerTools() wiring + per-tool logic functions
+  tools.test.ts  # colocated integration tests (in-memory client/server)
+  config.ts      # Env var loading and validation via Effect Config
+  logger.ts      # Effect structured logging
+  lib/
+    utils.ts       # MCP response helpers (createTextResult, createErrorResult)
+    mcp-schema.ts  # Effect Schema adapter for MCP Standard Schema
+    utils.test.ts  # colocated unit tests
+    mcp-schema.test.ts # adapter and JSON Schema dialect tests
+dist/            # compiled output (ES modules)
+```
+
+Config files (`vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `Dockerfile`) live at the repo root.
+
+## Architecture
+
+- HTTP transport via Express on `PORT` (default 3000) — **not** stdio; app wiring lives in `src/app.ts`, startup and shutdown in `src/index.ts`
+- Tools registered via `registerTools(server)` in `src/tools.ts`, the single source of truth for tool wiring — called from `getServer()` in `src/app.ts` and reused by the tests
+- Tool responses use `createTextResult` / `createErrorResult` from `src/lib/utils.ts`: a text `content` block plus `structuredContent` (for clients that declare an `outputSchema`)
+- Tool workflows use `Effect` and cross the MCP callback boundary with `runMcpEffect()`
+- Effect Schemas cross the MCP boundary through `toMcpSchema()`, which supports the MCP SDK's `draft-07` and `draft-2020-12` JSON Schema targets
+- Genuine execution failures return `isError: true` (via `createErrorResult`), not thrown; valid outcomes (e.g. a user declining an elicitation) are normal results
+- Stateless per the MCP 2026-07-28 spec: no session handshake or `Mcp-Session-Id`; `createMcpHandler` creates a fresh server per request and supports older clients through its fallback.
+- `GET /health` is a plain liveness endpoint (used by the Docker healthcheck) — `GET /mcp` itself is routed to the MCP handler and no longer doubles as one
+- If a tool needs state across calls, mint an explicit handle and have the model pass it back as an argument on the next call — there is no transport-level session to hang state off anymore
+- Graceful shutdown on `SIGTERM`/`SIGINT` (closes the handler and HTTP server in parallel with `Effect.all`, then exits)
+
+### Build System
+
+- Vite bundles to ES modules; `@modelcontextprotocol/server` and `@modelcontextprotocol/node` are external (not bundled)
+- TypeScript 7 provides the `tsc` compiler; the `typescript` dependency is an npm alias for `@typescript/typescript6` so `typescript-eslint` can use its legacy compiler API, and exposes `tsc6` for compatibility checks
+- `@` path alias maps to `src/`
+- Node.js 24+ required (native TypeScript type stripping used in dev)
+
+## Environment Variables
+
+Defined and validated in `src/config.ts`:
+
+| Variable         | Default                    | Description                          |
+|------------------|----------------------------|--------------------------------------|
+| `PORT`           | `3000`                     | HTTP server port                     |
+| `NODE_ENV`       | —                          | `development` / `production` / `test` |
+| `SERVER_NAME`    | `name` in `package.json`   | MCP server name                      |
+| `SERVER_VERSION` | `version` in `package.json` | MCP server version                   |
+| `LOG_LEVEL`      | `info`                     | `error` / `warn` / `info` / `debug`  |
+
+## Coding Conventions
+
+- TypeScript with ES module syntax (`import`/`export`)
+- Prettier defaults: 2-space indent, double quotes, trailing commas
+- ESLint with `@typescript-eslint` — `any` is discouraged (warn)
+- Private class methods use `#` prefix
+- Intentionally unused params/vars: prefix with `_`
+- `camelCase` for functions/variables, `PascalCase` for types
+- Descriptive filenames: `logger.ts`, `utils.ts`
+- Use `Effect.all` with explicit concurrency for independent parallel effects; use `Effect.tryPromise` only at Promise-based integration boundaries
+
+## Logging
+
+Use `logger` from `src/logger.ts` — yield the returned Effect inside an Effect workflow or run it with `runMcpEffect()` at a callback boundary. Never use `console.log`.
+
+```ts
+// Structured data first, message second
+yield* logger.info({ requestId, toolName }, "Tool executed");
+yield* logger.error({ requestId, toolName, error: error.message }, "Tool execution failed");
+```
+
+Log levels: `error` > `warn` > `info` > `debug`. For tool-call logs, include `requestId` and `toolName` so entries can be correlated back to a single call. Lifecycle and shutdown logs should include the context available to them. Add other scalar fields relevant to the outcome (e.g. `action`, `kind`). Never log the raw `args` object — tool inputs may carry user-provided or sensitive data — log individual fields only when they're known to be safe to record. Effect logging carries structured annotations and integrates with Effect's tracing context.
+
+## Adding a New Tool
+
+See the `create-mcp-tool` skill (`.agents/skills/create-mcp-tool`) for the full walkthrough. For projects created from the pre-Effect version of this template, use `migrate-mcp-template-to-effect` (`.agents/skills/migrate-mcp-template-to-effect`) first. In short:
+
+1. Add the `server.registerTool()` call inside `registerTools()` in `src/tools.ts`
+2. Provide a `title`, `description`, `inputSchema`/`outputSchema` created with `toMcpSchema(Schema.Struct({...}))`, and `annotations` (e.g. `readOnlyHint`)
+3. The handler receives `(args, ctx)` (or just `(ctx)` with no `inputSchema`) — `ctx.mcpReq.id` is the request id; there is no `sessionId` to rely on
+4. Compose the implementation as an `Effect` and return `runMcpEffect(effect)` from the MCP callback
+5. Return `createTextResult(result)` on success (it also emits `structuredContent`)
+6. On genuine failure return `createErrorResult({ error })` (sets `isError: true`); don't throw
+7. Log with `yield* logger.info({ toolName, requestId }, "Tool executed")` on success
+8. Log with `yield* logger.error({ toolName, requestId, error: error.message }, "Tool execution failed")` on failure — omit the raw `args` object (see Logging)
+9. If the tool needs user input mid-call, return `inputRequired({ inputRequests: {...} })` (see `elicit_echo` in `src/tools.ts`) — the older synchronous `elicitInput()` push request throws on a 2026-07-28-era connection
+10. Add integration tests to `src/tools.test.ts` (import `registerTools`, wire an in-memory client/server)
+
+## Testing
+
+- Framework: Vitest
+- Test files: `*.test.ts`, colocated beside the source (see `src/lib/utils.test.ts`)
+- Cover new tools, transports, config logic, schema adapters, and the HTTP app with focused tests
+- Use `async/await` for all async tests
+- Write a failing test that reproduces a bug before fixing it
+
+## Using This Template
+
+To build your own MCP server from this template:
+
+1. Update `package.json` (name, description, version). `name` and `version` are the MCP server identity unless `SERVER_NAME` or `SERVER_VERSION` is set
+2. Add/replace env vars in `src/config.ts`
+3. Replace the `echo` / `elicit_echo` tools in `src/tools.ts` with your tools
+4. Add business logic under `src/`
+5. Update `README.md` and this `AGENTS.md` to reflect your project
+
+## Commit & PR Guidelines
+
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`; use `feat!:` for breaking template migrations
+- PR description: summarize user-facing impact, link issues, list any new env vars
+- Include verification evidence: `npm run lint`, `npm run test:ci`
