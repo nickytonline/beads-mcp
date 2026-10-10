@@ -165,4 +165,4 @@ To build your own MCP server from this template:
 - Claims never expire and there are no leases; do not advertise lease behavior. `lease_expires_at` and `heartbeat_at` from `bd` are stripped from responses.
 - Optimistic concurrency is opt-in: `update`, `release`, `handoff` and `complete` take `expected_revision` (the `state_revision` from `get`). Without it writes are last-writer-wins. Keep `docs/GUARANTEES.md` and the tool descriptions in sync with the code, and do not claim guarantees that no test covers.
 - Live verification: `BD_BIN=/path/to/bd npm run test:beads`; default tests skip it.
-- Container pins Beads 1.3.1. Kubernetes samples and the deployment prompt live in `deploy/k3s/`.
+- Container pins Beads 1.3.1.

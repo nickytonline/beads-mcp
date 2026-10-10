@@ -56,7 +56,7 @@ Connect a client to `http://localhost:3000/mcp` and send a signed JWT in the con
 | `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |
 | `BEADS_DIR` | `<project>/.beads` | Store directory; use an absolute path |
 | `BD_BIN` | `bd` | CLI executable |
-| `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root; k3s sets `/data/dolt-config` |
+| `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root |
 | `PORT` | 3000 | HTTP port |
 | `NODE_ENV` | development | Template environment setting |
 | `SERVER_NAME` / `SERVER_VERSION` | package metadata | MCP identity |
@@ -81,7 +81,7 @@ BD_BIN=/path/to/bd npm run test:beads
 
 The opt-in live test initializes an isolated embedded store and exercises all eleven tools through the HTTP MCP transport, including competing claims, ownership, handoff, and dependency unblocking. Normal tests need no installed Beads executable.
 
-## Container and k3s
+## Container
 
 ```sh
 docker build -t <registry>/beads-mcp:0.1.0 .
@@ -91,15 +91,11 @@ After building, run `node scripts/smoke-container.mjs <image>` to verify initial
 
 Build supports linux/amd64 and linux/arm64. The release downloader honors proxy environment variables and verifies the Beads archive against release checksums. For a build environment with a custom proxy CA, pass `--secret id=proxy_ca,src=/path/to/ca.pem`. TLS verification stays enabled.
 
-[Deployment resources](deploy/k3s/resources.yaml) provide a namespace, PVC, one-replica Recreate deployment, and Service. Configure the JWT environment variables through your deployment's configuration and secret-management workflow. [Ingress example](deploy/k3s/ingress.example.yaml) requires your hostname, ingress class, and provisioned TLS secret. No secret values are shipped.
-
-Adapt the example manifests to your cluster's conventions before applying them. No cluster resources are applied by this repository.
-
 Back up with `bd backup` during exclusive maintenance access; stop the MCP and wait for its pod to terminate before accessing embedded storage. Preserve the PVC. `.beads/issues.jsonl` is an export, not the source of truth or a backup. Do not concurrently mount the store in a backup CronJob. Beads' [Dolt guide](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md) covers storage and migration.
 
 ## Running multiple MCP replicas
 
-The shipped container entrypoint and Kubernetes manifests use **embedded mode** and support **one replica**. Increasing `replicas` or adding an HPA against the embedded store is not supported. The in-process queue coordinates requests inside one pod only.
+The shipped container entrypoint uses **embedded mode** and supports **one replica**. Increasing `replicas` or adding an HPA against the embedded store is not supported. The in-process queue coordinates requests inside one pod only.
 
 For multiple replicas, use Beads **server mode**:
 
@@ -113,7 +109,7 @@ Before enabling replicas:
 
 1. Stop the embedded deployment and back up with `bd backup`. Follow the pinned Beads version's migration/restore procedure to move the existing data into server mode. Verify task counts, dependencies, and claims before retiring the original volume.
 2. Replace the embedded initialization in `scripts/entrypoint.sh` with server-mode setup using `bd init --server` and the appropriate `--server-host`, `--server-port`, and `--server-user` settings. Provision the shared database once; subsequent pods should open its existing state. Configure database credentials and TLS through Beads' supported settings and your cluster's secret management. Each pod needs its own workspace/configuration, pointing to that same database.
-3. Adapt the Kubernetes manifests for the external Dolt service and per-pod configuration. Remove the shared embedded-store volume from MCP pods, then configure multiple replicas and an appropriate rollout strategy. Keep database access private to the cluster.
+3. Configure the external Dolt service and per-pod settings. Remove the shared embedded-store volume from MCP pods, then configure multiple replicas and an appropriate rollout strategy. Keep database access private to the cluster.
 4. Make ownership-sensitive compound operations safe across pods. `release` and `handoff` currently check the assignee and then perform separate writes under a **local** queue. That check can become stale when another pod writes concurrently; use database-backed conditional operations or distributed coordination before promising ownership enforcement across replicas. Native Beads atomic claims remain the primitive for `claim`.
 5. Test competing claims, concurrent updates, release/handoff races, pod replacement, and database backup/restore against the shared server before routing production traffic to multiple replicas.
 
