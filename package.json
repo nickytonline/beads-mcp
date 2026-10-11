@@ -4,6 +4,10 @@
   "description": "HTTP MCP server for shared Beads task tracking",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist",
+    "skills"
+  ],
   "scripts": {
     "prebuild": "npm run typecheck",
     "build": "vite build",
@@ -16,6 +20,7 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
+    "verify:skill-package": "node scripts/verify-skill-package.mjs",
     "test:beads": "BEADS_LIVE_TEST=1 vitest run src/beads.live.test.ts"
   },
   "keywords": [
@@ -55,6 +60,7 @@
     "@types/express": "^5.0.6",
     "effect": "^3.22.2",
     "express": "^5.2.1",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "yaml": "^2.9.1"
   }
 }

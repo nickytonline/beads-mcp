@@ -36,6 +36,16 @@ Transport uses the template's stateless Streamable HTTP adapter at `/mcp`. `GET 
 
 Every request to `/mcp` requires a verified signed JWT. The authenticated actor is derived from the configured claim (normally `email`, falling back to `sub`) and is used for every write; optional `actor` fields remain only for client compatibility and are ignored for authenticated HTTP requests. Claims never expire: ownership lasts until `release`, `handoff` with `release`, or `complete`. `update`, `release`, `handoff` and `complete` accept an optional `expected_revision` (the `state_revision` from `get`) for compare-and-swap; without it, writes are last-writer-wins. Compound operations are serialized but are not atomic database transactions; notes may persist if a subsequent release fails. Handoff returns a warning in that case. Results use `{ data: <native Beads JSON> }`; genuine failures have `isError: true` and a body of `{ error, code, retryable, outcome_unknown }`. See [docs/GUARANTEES.md](docs/GUARANTEES.md) for exactly what is guaranteed, what is tested, and what is still unverified.
 
+## Agent skill discovery
+
+The server bundles the canonical [Beads engineering-backlog Agent Skill](skills/beads-engineering-backlog/SKILL.md). It explains when persistent engineering context is useful, how agents should search, claim, note, hand off, and complete work, and where Beads stops: it is not a personal to-do list, memory store, scheduler, orchestrator, or replacement for GitHub Issues.
+
+On protocol revision `2026-07-28` or later, `server/discover` advertises the stable `io.modelcontextprotocol/skills` extension. Clients that support the extension can call `skills/list` or `skills/get` for `skill://beads-engineering-backlog/SKILL.md`, then read the same bytes through `resources/read`. The listing includes a complete file manifest with SHA-256 digests and byte sizes, plus `ttlMs` and `cacheScope` freshness hints. This release does not advertise optional directory reads. Clients that do not support the extension can use the URI in the server instructions or install the standalone `SKILL.md` manually.
+
+Skill content is bundled from the same repository revision into the npm package and container image. There is no separate public skill version: immutable releases use the MCP package/image version, while mutable hosted deployments and client caches may update on their own schedule. A digest match checks consistency between a manifest and fetched bytes; it is not a trust anchor. Reading a resource does not automatically activate the skill, and support has not been assumed for every client—hosts must verify, approve, and load skills through their own supported path.
+
+See [docs/AGENT_SKILLS.md](docs/AGENT_SKILLS.md) for the protocol, security, caching, and compatibility notes.
+
 ## Local development
 
 Requires Node 24+ and Beads CLI 1.3.1 (the container pins this tested release). Use an existing initialized store, or initialize a fresh one:
