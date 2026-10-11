@@ -26,7 +26,7 @@ const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._@+|:-]*$/;
 /** Normalize an identity before it is used as a Beads actor. */
 export function normalizeActor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const normalized = value.normalize("NFKC").trim().toLowerCase();
+  const normalized = value.trim().toLowerCase();
   if (
     normalized.length === 0 ||
     normalized.length > 128 ||

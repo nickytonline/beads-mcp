@@ -53,6 +53,13 @@ describe("JWT identity authentication", () => {
     );
   });
 
+  it("rejects foldable Unicode instead of normalizing it onto an ASCII actor", () => {
+    // Fullwidth Latin "ｎick" NFKC-normalizes to "nick". Folding it would let
+    // a visually/structurally distinct identity collide with another actor's
+    // string; it must be rejected outright instead.
+    expect(normalizeActor("ｎick")).toBeUndefined();
+  });
+
   it("still requires an alphanumeric first character", () => {
     expect(normalizeActor("+user@example.com")).toBeUndefined();
     expect(normalizeActor("|auth0|abc")).toBeUndefined();
