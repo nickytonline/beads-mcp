@@ -64,8 +64,5 @@ export async function verifyJwtIdentity(
     requiredClaims: ["exp"],
   });
   const actor = actorFromPayload(payload, config.AUTH_ACTOR_CLAIM);
-  if (!payload.exp || payload.exp <= Math.floor(Date.now() / 1000)) {
-    throw new Error("JWT is expired");
-  }
-  return { actor, expiresAt: payload.exp, payload };
+  return { actor, expiresAt: payload.exp as number, payload };
 }
