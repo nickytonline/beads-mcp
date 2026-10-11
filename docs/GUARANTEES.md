@@ -94,6 +94,43 @@ and client changes. The in-process queue is memory only: requests in flight
 during a crash may or may not have been applied, which is what
 `outcome_unknown` is for.
 
+## Performance
+
+Every tool call forks and execs `bd` fresh (`src/beads.ts`); there is no
+persistent `bd`/Dolt connection. This is a deliberate floor cost, not an
+oversight. Using `npm run bench` (live mode) against the pinned `bd` 1.3.1
+binary, a sequential `get` on a fresh embedded-Dolt workspace costs **p50
+≈ 421ms**, almost entirely inside the `bd` subprocess (MCP overhead is
+sub-millisecond); `search`/`create`/`update` are in the same range.
+
+`bd` 1.3.1 has a persistent-process mode (`bd serve`, an HTTP API over
+loopback built for exactly this — "automation clients that would otherwise
+fork a bd subprocess per call") — but it only runs against a Dolt *server*
+backend (`--server`, or the upstream-**experimental** `--proxied-server`),
+never the embedded Dolt this server ships with; there is no in-place upgrade
+from an embedded workspace. The same `npm run bench` harness against a
+`--proxied-server` workspace (still using today's per-call `execFile`, no
+code changes) brought `get` p50 down to **≈ 99ms** — most of the embedded-mode
+cost is opening the embedded Dolt engine cold on every call, not the
+fork+exec itself. Layering `bd serve` on top of that (measured by hand, since
+the harness always shells out to `bd`) brought a `GET` of the same issue down
+to **≈ 13ms** per call.
+
+So the floor cost is real and the fix is real, but adopting either step means
+migrating the workspace off embedded Dolt: bundling a `dolt` binary and
+running one or two extra long-lived processes per pod (a managed Dolt
+sql-server, plus `bd serve` itself) in place of today's zero-extra-processes
+embedded mode, and the `--proxied-server` path both depend on is still
+labeled experimental upstream. This server stays on embedded Dolt and
+per-call `execFile` until that mode graduates out of experimental. See
+task-8f0.4 for the full investigation, methodology, and numbers.
+
+Bounded concurrency for read-only `bd` commands was also tried and reverted:
+live k8s measurement showed it made `get` latency *worse* (concurrent `bd`
+invocations contend inside `bd`/the embedded Dolt workspace), confirming the
+bottleneck is per-call startup cost, not this server's FIFO queue. See
+task-8f0.2.
+
 ## Verification status
 
 | Claim | Evidence |
