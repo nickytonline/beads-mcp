@@ -55,17 +55,25 @@ function isMapping(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseFrontmatter(document: string): SkillFrontmatter {
-  if (!document.startsWith("---\n")) {
+// Matches a fence line consisting of only "---", tolerating trailing
+// whitespace and CRLF line endings so minor formatting slips in a
+// hand-edited SKILL.md don't crash catalog loading at startup.
+const OPENING_FENCE = /^---[ \t]*\r?\n/;
+const CLOSING_FENCE = /\r?\n---[ \t]*\r?\n/;
+
+export function parseFrontmatter(document: string): SkillFrontmatter {
+  const opening = OPENING_FENCE.exec(document);
+  if (!opening) {
     throw new Error("Skill SKILL.md must start with YAML frontmatter");
   }
 
-  const closingMarker = document.indexOf("\n---\n", 4);
-  if (closingMarker < 0) {
+  const body = document.slice(opening[0].length);
+  const closing = CLOSING_FENCE.exec(body);
+  if (!closing) {
     throw new Error("Skill SKILL.md has no closing YAML frontmatter marker");
   }
 
-  const parsed = parseYaml(document.slice(4, closingMarker));
+  const parsed = parseYaml(body.slice(0, closing.index));
   if (!isMapping(parsed)) {
     throw new Error("Skill frontmatter must be a YAML mapping");
   }
