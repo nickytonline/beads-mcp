@@ -9,6 +9,7 @@ import {
   type ServerContext,
 } from "@modelcontextprotocol/server";
 import { Schema } from "effect";
+import { parse as parseYaml } from "yaml";
 import { toMcpSchema } from "./lib/mcp-schema.ts";
 
 export const SKILL_URI = "skill://beads-engineering-backlog/SKILL.md" as const;
@@ -54,24 +55,12 @@ function parseFrontmatter(document: string): Record<string, unknown> {
     throw new Error("Skill SKILL.md has no closing YAML frontmatter marker");
   }
 
-  const frontmatter: Record<string, unknown> = {};
-  for (const line of document.slice(4, closingMarker).split("\n")) {
-    if (!line.trim()) continue;
-    const match = /^(?<key>[A-Za-z0-9_-]+):[ \t]*(?<value>.*)$/.exec(line);
-    if (!match?.groups) {
-      throw new Error(`Unsupported skill frontmatter line: ${line}`);
-    }
-
-    const { key, value } = match.groups;
-    if (value.startsWith('"') && value.endsWith('"')) {
-      frontmatter[key] = JSON.parse(value);
-    } else if (value.startsWith("'") && value.endsWith("'")) {
-      frontmatter[key] = value.slice(1, -1).replace(/''/g, "'");
-    } else {
-      frontmatter[key] = value;
-    }
+  const parsed = parseYaml(document.slice(4, closingMarker));
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Skill frontmatter must be a YAML mapping");
   }
 
+  const frontmatter = parsed as Record<string, unknown>;
   const name = frontmatter.name;
   const description = frontmatter.description;
   if (
