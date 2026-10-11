@@ -2,6 +2,9 @@
 
 What this server promises, what it does not, and how each promise is tested.
 Scope: one MCP process, one replica, embedded Dolt (the shipped configuration).
+The optional `BD_SERVE_URL` mode uses the same process and queue guarantees
+against a colocated `bd serve` sidecar and a Dolt SQL server; it is separately
+deployed and remains default-off.
 
 ## Ownership
 
@@ -93,6 +96,26 @@ Task state lives in embedded Dolt on a persistent volume and survives restarts
 and client changes. The in-process queue is memory only: requests in flight
 during a crash may or may not have been applied, which is what
 `outcome_unknown` is for.
+
+## Performance
+
+The default embedded-Dolt path forks and execs `bd` for every tool call. With
+the pinned Beads 1.3.1 binary, the repository benchmark measured approximately
+421 ms p50 for a sequential `get`. A Dolt server workspace using per-call CLI
+execution measured approximately 99 ms p50; keeping `bd serve` open over
+loopback measured approximately 13–15 ms p50.
+
+The lower-latency path is opt-in through `BD_SERVE_URL` and requires the stable
+external-Dolt `--server` backend plus a `bd serve` sidecar. The upstream
+`--proxied-server` mode remains experimental and is not required by this
+implementation. Switching an existing embedded workspace is a data migration
+and adds an independently operated Dolt SQL server, so the default remains
+embedded mode.
+
+HTTP execution preserves the existing tool schemas, FIFO queue, ownership
+rules, error codes, and client-computed revision/CAS contract. HTTP mode plus
+multiple MCP replicas is not a verified guarantee; keep one replica until
+cross-pod ownership and conditional-write behavior are explicitly tested.
 
 ## Verification status
 

@@ -66,6 +66,9 @@ Connect a client to `http://localhost:3000/mcp` and send a signed JWT in the con
 | `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |
 | `BEADS_DIR` | `<project>/.beads` | Store directory; use an absolute path |
 | `BD_BIN` | `bd` | CLI executable |
+| `BD_SERVE_URL` | unset | Opt in to the `bd serve` HTTP executor, for example `http://127.0.0.1:8742` |
+| `BD_SERVE_TIMEOUT_MS` | 30000 | HTTP request timeout in milliseconds |
+| `BD_SERVE_AUTH_TOKEN_FILE` | unset | Optional bearer-token file for a non-loopback `bd serve` endpoint |
 | `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root |
 | `PORT` | 3000 | HTTP port |
 | `NODE_ENV` | development | Template environment setting |
@@ -87,6 +90,7 @@ npm run format:check
 npm run build
 npm run test:ci
 BD_BIN=/path/to/bd npm run test:beads
+BD_BIN=/path/to/pinned/bd npm run test:beads-http
 ```
 
 The opt-in live test initializes an isolated embedded store and exercises all eleven tools through the HTTP MCP transport, including competing claims, ownership, handoff, and dependency unblocking. Normal tests need no installed Beads executable.
@@ -140,3 +144,136 @@ Before enabling replicas:
 5. Test competing claims, concurrent updates, release/handoff races, pod replacement, and database backup/restore against the shared server before routing production traffic to multiple replicas.
 
 This is the upgrade path, not a server-mode deployment included in the current release. See Beads' [Dolt backend guide](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md) for connection, storage, and migration details.
+
+## Running in HTTP execution mode (optional)
+
+The default deployment remains embedded Dolt with one MCP replica. For lower
+per-call latency, opt in to the stable external-Dolt `--server` backend and
+`bd serve`:
+
+```text
+MCP container ── localhost ── bd serve sidecar ── pod network ── Dolt SQL server
+```
+
+The MCP container sets `BD_SERVE_URL=http://127.0.0.1:8742`. The sidecar runs
+the same image with `bd serve --addr=127.0.0.1:8742`; both containers share a
+network namespace, so the HTTP endpoint stays loopback-only and needs no auth
+token. The Dolt SQL server is a separately operated service with its own
+persistent storage. Protect that cross-pod connection with TLS or an mTLS
+service mesh and, where the cluster uses default-deny policies, allow only the
+sidecar-to-Dolt traffic.
+
+This mode is default-off and does not change the MCP tool schemas, FIFO queue,
+error codes, or client-computed revision/CAS behavior. It does require a
+server-mode workspace and a migration/rollback plan for data currently in
+embedded Dolt. Do not point `BD_SERVE_URL` at a shared public endpoint unless
+you configure authentication and transport security.
+
+### Docker Compose
+
+Use three services: the MCP app, a `bd serve` sidecar, and an operator-managed
+Dolt SQL server. The example uses placeholders for the pinned image and Dolt
+credentials; replace them with your deployment's versioned values.
+
+```yaml
+services:
+  dolt-sql:
+    image: <pinned-dolt-sql-server-image>
+    # Persist Dolt data and configure TLS/credentials here.
+
+  bd-serve:
+    image: <registry>/beads-mcp:<tag>
+    environment:
+      BEADS_PROJECT_DIR: /data/project
+      BEADS_DIR: /data/project/.beads
+      BD_SERVE_URL: http://127.0.0.1:8742
+    volumes:
+      - bd-workspace:/data/project
+    depends_on:
+      - dolt-sql
+    command: >-
+      sh -ec 'bd init --init-if-missing --server
+      --server-host=dolt-sql --server-port=3306
+      --server-user=$$DOLT_USER --server-password=$$DOLT_PASSWORD
+      --prefix=task --skip-agents --skip-hooks --non-interactive
+      && exec bd serve --addr=127.0.0.1:8742'
+
+  mcp:
+    image: <registry>/beads-mcp:<tag>
+    network_mode: service:bd-serve
+    environment:
+      BD_SERVE_URL: http://127.0.0.1:8742
+      BD_SERVE_TIMEOUT_MS: 30000
+    depends_on:
+      - bd-serve
+
+volumes:
+  bd-workspace:
+```
+
+Initialize the server-mode workspace once, verify task/dependency counts and
+claims, then run the MCP service with `BD_SERVE_URL` set. Compose has no
+NetworkPolicy equivalent; keep the project network private and configure TLS
+for the Dolt connection.
+
+### Kubernetes
+
+Run the MCP app and `bd serve` as containers in the same Pod. Use an `emptyDir`
+or dedicated small volume for the sidecar's Beads workspace metadata; the
+authoritative data belongs to the separate Dolt SQL server's persistent volume.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beads-mcp
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: mcp
+          image: <registry>/beads-mcp:<tag>
+          env:
+            - name: BD_SERVE_URL
+              value: http://127.0.0.1:8742
+            - name: BD_SERVE_TIMEOUT_MS
+              value: "30000"
+          ports:
+            - containerPort: 3000
+        - name: bd-serve
+          image: <registry>/beads-mcp:<tag>
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              bd init --init-if-missing --server
+              --server-host=dolt-sql --server-port=3306
+              --server-user="$DOLT_USER"
+              --server-password="$DOLT_PASSWORD"
+              --prefix=task --skip-agents --skip-hooks
+              --non-interactive
+              && exec bd serve --addr=127.0.0.1:8742
+          env:
+            - name: BD_SERVE_URL
+              value: http://127.0.0.1:8742
+            - name: DOLT_USER
+              valueFrom:
+                secretKeyRef: {name: dolt-credentials, key: user}
+            - name: DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: dolt-credentials, key: password}
+          volumeMounts:
+            - name: bd-workspace
+              mountPath: /data/project
+      volumes:
+        - name: bd-workspace
+          emptyDir: {}
+```
+
+Deploy the Dolt SQL server separately as a StatefulSet/Service with pinned
+versions, persistent storage, credentials, backups, and TLS. The MCP-to-
+`bd serve` hop is loopback and does not need a NetworkPolicy. If the cluster
+uses default-deny policies, add a policy allowing only the `bd-serve` container
+to connect to the Dolt SQL Service on its SQL/TLS port. Keep `replicas: 1` until
+cross-pod ownership races and database-backed conditional writes have been
+validated; HTTP execution mode and multi-replica scaling are separate concerns.

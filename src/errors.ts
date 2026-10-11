@@ -142,3 +142,87 @@ export function classifyFailure(input: FailureInput): BeadsError {
     { retryable: !write, outcomeUnknown: write },
   );
 }
+
+export interface HttpFailureInput {
+  /** Present when `bd serve` answered with a non-2xx response. */
+  status?: number;
+  /** The parsed JSON error body, if any; field types are read defensively. */
+  body?: Record<string, unknown>;
+  /** The request's AbortSignal.timeout fired. */
+  aborted?: boolean;
+  /** fetch() itself rejected: connection refused, DNS failure, etc. */
+  networkError?: boolean;
+  write: boolean;
+}
+
+function stringField(
+  body: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  const value = body?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+/**
+ * Maps a failed `bd serve` HTTP call to the same typed error `classifyFailure`
+ * produces for the CLI path, so `tools.ts` and `GUARANTEES.md`'s error table
+ * are identical regardless of execution mode. Kept separate from
+ * `classifyFailure` because the input signal (structured status/body) is
+ * fundamentally different from stderr text, and this keeps both classifiers
+ * independently testable without changing the subprocess path's contract.
+ */
+export function classifyHttpFailure(input: HttpFailureInput): BeadsError {
+  const { write } = input;
+
+  if (input.networkError) {
+    return new BeadsError(
+      "BACKEND_UNAVAILABLE",
+      "Beads serve endpoint is unreachable",
+      { retryable: !write },
+    );
+  }
+  if (input.aborted) {
+    return new BeadsError(
+      "OUTCOME_UNCERTAIN",
+      "Beads serve request timed out; inspect the task before retrying a write",
+      { retryable: !write, outcomeUnknown: write },
+    );
+  }
+  const status = input.status ?? 0;
+  const bodyCode =
+    stringField(input.body, "code") || stringField(input.body, "reason");
+  if (status === 404) {
+    return new BeadsError("NOT_FOUND", "Task not found", { retryable: false });
+  }
+  if (status === 409 && /claimed|already_claimed/i.test(bodyCode)) {
+    return new BeadsError(
+      "OWNERSHIP_CONFLICT",
+      "Task is already claimed by another actor",
+      { retryable: false },
+    );
+  }
+  if (status === 409 && /cycle/i.test(bodyCode)) {
+    return new BeadsError(
+      "DEPENDENCY_CYCLE",
+      "Dependency would create a cycle",
+      { retryable: false },
+    );
+  }
+  if (status === 400) {
+    return new BeadsError("INVALID_INPUT", "Beads rejected the input", {
+      retryable: false,
+    });
+  }
+  if (status >= 500 || status === 503) {
+    return new BeadsError(
+      "BACKEND_UNAVAILABLE",
+      "Beads storage is temporarily unavailable",
+      { retryable: !write, outcomeUnknown: write },
+    );
+  }
+  return new BeadsError(
+    "INTERNAL",
+    `Beads serve request failed (${status || "unknown"}). Check the task state before retrying a write; its outcome may be uncertain.`,
+    { retryable: !write, outcomeUnknown: write },
+  );
+}

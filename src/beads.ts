@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { BeadsError, classifyFailure } from "./errors.ts";
+import { makeExecuteBeadsHttp } from "./beads-http.ts";
 
 export type BeadsCommand = (args: string[], actor?: string) => Promise<unknown>;
 export type BeadsTransaction = <T>(
@@ -49,7 +50,21 @@ export class BeadsClient {
   }
 }
 
-export const beads = new BeadsClient();
+// Opt-in: unset (the default) keeps today's per-call `bd` subprocess exec,
+// unchanged. Set only when a `bd serve` sidecar + Dolt server mode (--server,
+// not the experimental --proxied-server) are actually running — see README
+// "Running in HTTP execution mode".
+const bdServeUrl = process.env.BD_SERVE_URL;
+export const beads = new BeadsClient(
+  bdServeUrl
+    ? makeExecuteBeadsHttp(bdServeUrl, {
+        timeoutMs: process.env.BD_SERVE_TIMEOUT_MS
+          ? Number(process.env.BD_SERVE_TIMEOUT_MS)
+          : undefined,
+        authTokenFile: process.env.BD_SERVE_AUTH_TOKEN_FILE,
+      })
+    : executeBeads,
+);
 
 const READ_COMMANDS = new Set(["show", "ready", "search", "list"]);
 
