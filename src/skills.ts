@@ -156,7 +156,7 @@ function loadSkillCatalog(): SkillCatalog {
 
 const catalog = loadSkillCatalog();
 const listSkillsParams = toMcpSchema(
-  Schema.Struct({ cursor: Schema.optional(Schema.String) }),
+  Schema.Struct({ cursor: Schema.optionalKey(Schema.String) }),
 );
 const getSkillParams = toMcpSchema(Schema.Struct({ uri: Schema.String }));
 

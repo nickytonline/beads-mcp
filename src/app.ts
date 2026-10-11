@@ -116,7 +116,7 @@ export function createApp(
           nodeHandler(req as typeof req & { auth: AuthInfo }, res, req.body),
         catch: (error) => error,
       }).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           Effect.gen(function* () {
             yield* logger.error(
               { error: error instanceof Error ? error.message : String(error) },

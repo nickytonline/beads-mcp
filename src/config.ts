@@ -2,37 +2,34 @@ import { Config as EffectConfig, ConfigProvider, Effect } from "effect";
 import packageJson from "../package.json" with { type: "json" };
 
 const configEffect = EffectConfig.all({
-  PORT: EffectConfig.number("PORT").pipe(EffectConfig.withDefault(3000)),
-  NODE_ENV: EffectConfig.literal(
-    "development",
-    "production",
-    "test",
-  )("NODE_ENV").pipe(EffectConfig.withDefault("development")),
-  SERVER_NAME: EffectConfig.string("SERVER_NAME").pipe(
+  PORT: EffectConfig.Number("PORT").pipe(EffectConfig.withDefault(3000)),
+  NODE_ENV: EffectConfig.Literals(
+    ["development", "production", "test"],
+    "NODE_ENV",
+  ).pipe(EffectConfig.withDefault("development")),
+  SERVER_NAME: EffectConfig.String("SERVER_NAME").pipe(
     EffectConfig.withDefault(packageJson.name),
   ),
-  SERVER_VERSION: EffectConfig.string("SERVER_VERSION").pipe(
+  SERVER_VERSION: EffectConfig.String("SERVER_VERSION").pipe(
     EffectConfig.withDefault(packageJson.version),
   ),
-  LOG_LEVEL: EffectConfig.literal(
-    "error",
-    "warn",
-    "info",
-    "debug",
-  )("LOG_LEVEL").pipe(EffectConfig.withDefault("info")),
-  AUTH_JWT_HEADER: EffectConfig.string("AUTH_JWT_HEADER").pipe(
+  LOG_LEVEL: EffectConfig.Literals(
+    ["error", "warn", "info", "debug"],
+    "LOG_LEVEL",
+  ).pipe(EffectConfig.withDefault("info")),
+  AUTH_JWT_HEADER: EffectConfig.String("AUTH_JWT_HEADER").pipe(
     EffectConfig.withDefault("X-Authenticated-JWT"),
   ),
-  AUTH_JWKS_URL: EffectConfig.string("AUTH_JWKS_URL").pipe(
+  AUTH_JWKS_URL: EffectConfig.String("AUTH_JWKS_URL").pipe(
     EffectConfig.withDefault(""),
   ),
-  AUTH_ISSUER: EffectConfig.string("AUTH_ISSUER").pipe(
+  AUTH_ISSUER: EffectConfig.String("AUTH_ISSUER").pipe(
     EffectConfig.withDefault(""),
   ),
-  AUTH_AUDIENCE: EffectConfig.string("AUTH_AUDIENCE").pipe(
+  AUTH_AUDIENCE: EffectConfig.String("AUTH_AUDIENCE").pipe(
     EffectConfig.withDefault(""),
   ),
-  AUTH_ACTOR_CLAIM: EffectConfig.string("AUTH_ACTOR_CLAIM").pipe(
+  AUTH_ACTOR_CLAIM: EffectConfig.String("AUTH_ACTOR_CLAIM").pipe(
     EffectConfig.withDefault("email"),
   ),
 });
@@ -42,9 +39,7 @@ export type Config =
     ? ConfigValue
     : never;
 
-const loadConfig = Effect.withConfigProvider(ConfigProvider.fromEnv())(
-  configEffect,
-);
+const loadConfig = configEffect.parse(ConfigProvider.fromEnv());
 
 let config: Config | undefined;
 
