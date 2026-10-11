@@ -169,6 +169,29 @@ server-mode workspace and a migration/rollback plan for data currently in
 embedded Dolt. Do not point `BD_SERVE_URL` at a shared public endpoint unless
 you configure authentication and transport security.
 
+#### Migrating an existing embedded workspace
+
+Do not assume `bd migrate` performs this conversion. In Beads 1.3.1,
+`bd migrate` has mode-switch commands for proxied/shared/server workspaces, but
+there is no in-place embedded-Dolt-to-external-server conversion. Treat this as
+a planned data migration:
+
+1. Stop writes, take a Dolt-native backup with the configured `bd backup`
+   destination, and export issue records with `bd export -o issues.jsonl`.
+2. Provision the external Dolt SQL server and initialize a fresh server-mode
+   workspace with `bd init --server --external`, using `--server-host`,
+   `--server-port`, and `--server-user`; provide the password through
+   `BEADS_DOLT_PASSWORD`.
+3. Import the exported JSONL into the new workspace using Beads' configured
+   `import.path` and `bd init --from-jsonl` flow. Verify task counts, labels,
+   dependencies, comments, claims, and revisions before cutover.
+4. Deploy the sidecar, set `BD_SERVE_URL`, and keep the original embedded
+   volume intact until the new path has passed staging checks. Roll back by
+   stopping the sidecar path and restoring the original embedded deployment.
+
+Use the exact migration/restore procedure for the pinned Beads and Dolt
+versions, and rehearse it on a copy before touching production data.
+
 ### Docker Compose
 
 Use three services: the MCP app, a `bd serve` sidecar, and an operator-managed
@@ -186,15 +209,16 @@ services:
     environment:
       BEADS_PROJECT_DIR: /data/project
       BEADS_DIR: /data/project/.beads
+      BEADS_DOLT_PASSWORD: ${DOLT_PASSWORD:?set DOLT_PASSWORD}
       BD_SERVE_URL: http://127.0.0.1:8742
     volumes:
       - bd-workspace:/data/project
     depends_on:
       - dolt-sql
     command: >-
-      sh -ec 'bd init --init-if-missing --server
+      sh -ec 'bd init --init-if-missing --external --server
       --server-host=dolt-sql --server-port=3306
-      --server-user=$$DOLT_USER --server-password=$$DOLT_PASSWORD
+      --server-user=root
       --prefix=task --skip-agents --skip-hooks --non-interactive
       && exec bd serve --addr=127.0.0.1:8742'
 
@@ -246,10 +270,9 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - >-
-              bd init --init-if-missing --server
+              bd init --init-if-missing --external --server
               --server-host=dolt-sql --server-port=3306
               --server-user="$DOLT_USER"
-              --server-password="$DOLT_PASSWORD"
               --prefix=task --skip-agents --skip-hooks
               --non-interactive
               && exec bd serve --addr=127.0.0.1:8742
@@ -260,6 +283,9 @@ spec:
               valueFrom:
                 secretKeyRef: {name: dolt-credentials, key: user}
             - name: DOLT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: dolt-credentials, key: password}
+            - name: BEADS_DOLT_PASSWORD
               valueFrom:
                 secretKeyRef: {name: dolt-credentials, key: password}
           volumeMounts:
