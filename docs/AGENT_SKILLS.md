@@ -21,7 +21,7 @@ For protocol revision `2026-07-28` or later, `server/discover` includes:
 
 The empty extension object is intentional: this server implements the required `skills/list` and `skills/get` methods and does not implement optional `resources/directory/read`.
 
-`skills/list` returns a complete manifest for `skill://beads-engineering-backlog/SKILL.md`. `skills/get` returns the same entry when given that URI. Both results include `resultType: "complete"`, `ttlMs`, and `cacheScope`. The resource manifest covers every file in the skill directory, with a `sha256:{hex}` digest and raw byte size for each file. Pagination is supported by the handler contract; the current one-skill catalog fits in one page and returns no `nextCursor`.
+`skills/list` returns a complete manifest for `skill://beads-engineering-backlog/SKILL.md`. `skills/get` returns the same entry when given that URI. Both results include `resultType: "complete"`, `ttlMs`, and `cacheScope`. The resource manifest covers every file in the skill directory, with a `sha256:{hex}` digest and raw byte size for each file. The `skills/list` handler does not currently accept a `cursor` parameter: it always returns the full one-skill catalog in a single page with no `nextCursor`, and a request that supplies a defined `cursor` is rejected with an `InvalidParams` error. Real cursor-based pagination will be added if and when the catalog grows beyond one page.
 
 All skill files are ordinary MCP resources and are read with `resources/read`. The required file is `text/markdown`; future supporting files use a MIME type derived from their extension or `application/octet-stream`. The server instructions include the skill URI as a fallback for clients without Skills extension support.
 
