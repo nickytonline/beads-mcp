@@ -44,6 +44,7 @@ src/
   tools.test.ts  # colocated integration tests (in-memory client/server)
   hardening.test.ts # concurrency, ownership, change-detection and error-contract tests
   beads.ts       # process-wide bd queue and subprocess execution
+  bench-latency.ts # latency benchmark harness for MCP tool calls (npm run bench)
   errors.ts      # typed error codes and bd stderr classification
   revision.ts    # state_revision / activity_revision and lease-field stripping
   config.ts      # Env var loading and validation via Effect Config
