@@ -22,7 +22,7 @@ afterEach(async () => {
 /** Wires an in-memory MCP client/server pair over `run`, authenticated as `authenticatedActor`. */
 async function setup(run: BeadsCommand, authenticatedActor?: string) {
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(server, new BeadsClient(run).transaction, authenticatedActor);
+  registerTools(server, new BeadsClient(run), authenticatedActor);
   const client = new Client({ name: "test", version: "0.0.0" });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);

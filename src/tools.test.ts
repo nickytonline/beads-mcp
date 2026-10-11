@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 async function setup(run: BeadsCommand = async () => []) {
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(server, new BeadsClient(run).transaction);
+  registerTools(server, new BeadsClient(run));
   const client = new Client({ name: "test", version: "0.0.0" });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await server.connect(st);

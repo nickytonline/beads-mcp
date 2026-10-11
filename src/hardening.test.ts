@@ -1,6 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
@@ -24,11 +25,7 @@ afterEach(async () => {
 async function setup(authenticatedActor?: string) {
   const fake = createFakeBd();
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(
-    server,
-    new BeadsClient(fake.run).transaction,
-    authenticatedActor,
-  );
+  registerTools(server, new BeadsClient(fake.run), authenticatedActor);
   const client = new Client({ name: "test", version: "0.0.0" });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);
@@ -566,6 +563,144 @@ describe("error contract", () => {
       outcomeUnknown: false,
     });
     expect(fake.commands).toHaveLength(0);
+  });
+});
+
+describe("bounded read concurrency / write serialization (#38)", () => {
+  it("runs read-only jobs concurrently, overlapping in time", async () => {
+    const bound = 4;
+    const client = new BeadsClient(async () => null, bound);
+    let active = 0;
+    let maxActive = 0;
+    const readJob = () => () =>
+      (async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await delay(30);
+        active--;
+        return null;
+      })();
+
+    await Promise.all(Array.from({ length: 6 }, () => client.read(readJob())));
+
+    expect(maxActive).toBeGreaterThan(1); // proves real overlap, not serialization
+    expect(maxActive).toBeLessThanOrEqual(bound);
+  });
+
+  it("caps concurrent reads at the configured bound", async () => {
+    const bound = 2;
+    const client = new BeadsClient(async () => null, bound);
+    let active = 0;
+    let maxActive = 0;
+    const readJob = () => () =>
+      (async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await delay(30);
+        active--;
+        return null;
+      })();
+
+    await Promise.all(Array.from({ length: 5 }, () => client.read(readJob())));
+
+    expect(maxActive).toBe(bound);
+  });
+
+  it("never runs two writes at once", async () => {
+    const client = new BeadsClient(async () => null);
+    let activeWriters = 0;
+    let overlapped = false;
+    const write = () =>
+      client.transaction(() =>
+        (async () => {
+          activeWriters++;
+          if (activeWriters > 1) overlapped = true;
+          await delay(15);
+          activeWriters--;
+          return null;
+        })(),
+      );
+
+    await Promise.all([write(), write(), write()]);
+
+    expect(overlapped).toBe(false);
+  });
+
+  it("holds a write until reads queued ahead of it finish, and makes a later read wait for that write", async () => {
+    const client = new BeadsClient(async () => null);
+    let activeReaders = 0;
+    let writeOverlappedAPriorRead = false;
+    let readCRanBeforeWriteFinished = false;
+    const log: string[] = [];
+
+    const trackedRead = (name: string) =>
+      client.read(() =>
+        (async () => {
+          activeReaders++;
+          log.push(`${name}:start`);
+          await delay(30);
+          log.push(`${name}:end`);
+          activeReaders--;
+          return null;
+        })(),
+      );
+
+    // Queued, and already running, before the write below is submitted.
+    const readA = trackedRead("readA");
+    const readB = trackedRead("readB");
+
+    const write = client.transaction(() =>
+      (async () => {
+        if (activeReaders > 0) writeOverlappedAPriorRead = true;
+        log.push("write:start");
+        await delay(5);
+        log.push("write:end");
+        return null;
+      })(),
+    );
+
+    // Submitted after the write - must wait for it even though reads
+    // otherwise run concurrently.
+    const readC = client.read(() =>
+      (async () => {
+        if (!log.includes("write:end")) readCRanBeforeWriteFinished = true;
+        log.push("readC:start");
+        return null;
+      })(),
+    );
+
+    await Promise.all([readA, readB, write, readC]);
+
+    expect(writeOverlappedAPriorRead).toBe(false);
+    expect(readCRanBeforeWriteFinished).toBe(false);
+    expect(log.indexOf("write:start")).toBeGreaterThan(
+      log.indexOf("readA:end"),
+    );
+    expect(log.indexOf("write:start")).toBeGreaterThan(
+      log.indexOf("readB:end"),
+    );
+    expect(log.indexOf("readC:start")).toBeGreaterThan(
+      log.indexOf("write:end"),
+    );
+  });
+
+  it("drain waits for in-flight reads as well as the write tail", async () => {
+    const client = new BeadsClient(async () => null);
+    let readFinished = false;
+    const read = client.read(
+      () =>
+        new Promise((resolveRead) =>
+          setTimeout(() => {
+            readFinished = true;
+            resolveRead(null);
+          }, 20),
+        ),
+    );
+
+    await client.drain();
+
+    expect(readFinished).toBe(true);
+    await read;
   });
 });
 

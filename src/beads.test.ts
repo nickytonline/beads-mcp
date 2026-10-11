@@ -7,10 +7,17 @@ describe("embedded Beads queue", () => {
     const gate = new Promise<void>((resolve) => {
       unblock = resolve;
     });
+    let signalFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      signalFirstStarted = resolve;
+    });
     const order: string[] = [];
     const client = new BeadsClient(async ([name]) => {
       order.push(name);
-      if (name === "first") await gate;
+      if (name === "first") {
+        signalFirstStarted();
+        await gate;
+      }
       return null;
     });
     const first = client.transaction(async (run) => {
@@ -22,7 +29,10 @@ describe("embedded Beads queue", () => {
     });
     const failure = expect(failing).rejects.toThrow("failed");
     const last = client.transaction((run) => run(["last"]));
-    await Promise.resolve();
+    // Confirms "first" is already running (not just queued) before anything
+    // else gets a chance to run, regardless of how many microtask hops the
+    // queue's internal gating takes to reach it.
+    await firstStarted;
     expect(order).toEqual(["first"]);
     unblock();
     await Promise.all([first, failure, last]);

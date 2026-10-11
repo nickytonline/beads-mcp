@@ -14,7 +14,7 @@ I wanted to build a general-purpose Beads MCP using [my TypeScript MCP template]
 Agents → HTTPS ingress → TypeScript MCP + bd → embedded Dolt on a PVC
 ```
 
-One server process, one replica, one process-wide FIFO queue for **all** Beads commands, including reads and compound operations. Embedded Dolt is a single-writer store. Do not run another MCP instance, CLI process, or backup job against it concurrently. The queue has a 100-operation admission limit; each CLI subprocess has a 30-second timeout and a 4 MiB output limit. A timeout or invalid output can leave a write's outcome uncertain: inspect the task before retrying.
+One server process, one replica, one process-wide queue for **all** Beads commands. Writes (`create`, `update`, `claim`, `release`, `add_note`, `link`, `complete`, `handoff`) are fully serialized FIFO: never concurrent with another write, and never concurrent with a read already queued ahead of them. Reads (`ready`, `search`, `get`) run with bounded concurrency (`BEADS_READ_CONCURRENCY`, default 8) among themselves, but a read queued after a pending write waits for that write to finish first, so no read observes partially-applied state. Embedded Dolt is a single-writer store. Do not run another MCP instance, CLI process, or backup job against it concurrently. The queue has a 100-operation admission limit shared across reads and writes; each CLI subprocess has a 30-second timeout and a 4 MiB output limit. A timeout or invalid output can leave a write's outcome uncertain: inspect the task before retrying.
 
 Transport uses the template's stateless Streamable HTTP adapter at `/mcp`. `GET /health` checks process liveness; startup verifies the initialized store before listening. Health does not continuously query the database. Logs omit task inputs and subprocess stderr.
 
@@ -66,6 +66,7 @@ Connect a client to `http://localhost:3000/mcp` and send a signed JWT in the con
 | `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |
 | `BEADS_DIR` | `<project>/.beads` | Store directory; use an absolute path |
 | `BD_BIN` | `bd` | CLI executable |
+| `BEADS_READ_CONCURRENCY` | 8 | Max concurrent read-only `bd` subprocesses (`ready`/`search`/`get`) |
 | `DOLT_ROOT_PATH` | Dolt default | Writable Dolt config root |
 | `PORT` | 3000 | HTTP port |
 | `NODE_ENV` | development | Template environment setting |

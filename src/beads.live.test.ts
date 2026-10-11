@@ -21,7 +21,7 @@ it.runIf(process.env.BEADS_LIVE_TEST === "1")(
     const queue = new BeadsClient();
     const handler = createMcpHandler(() => {
       const server = new McpServer({ name: "beads-test", version: "0.0.0" });
-      registerTools(server, queue.transaction);
+      registerTools(server, queue);
       return server;
     });
     const client = new Client({ name: "live-test", version: "0.0.0" });

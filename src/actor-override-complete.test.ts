@@ -29,11 +29,7 @@ async function setup(
   authenticatedActor?: string,
 ) {
   const server = new McpServer({ name: "test", version: "0.0.0" });
-  registerTools(
-    server,
-    new BeadsClient(fake.run).transaction,
-    authenticatedActor,
-  );
+  registerTools(server, new BeadsClient(fake.run), authenticatedActor);
   const client = new Client({ name: "test", version: "0.0.0" });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   await server.connect(serverSide);

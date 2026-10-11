@@ -31,10 +31,20 @@ authenticated HTTP writes always use the verified actor from request context.
 
 ## Concurrency
 
-- Every `bd` invocation, including reads and the read-then-write sequences
-  inside `update`, `release`, `handoff` and `complete`, runs in one FIFO queue.
-  A multi-field `update` is applied as one `bd` call and is never interleaved
-  with another request.
+- Writes (`create`, `update`, `claim`, `release`, `add_note`, `link`,
+  `complete`, `handoff`) run through one FIFO queue: never concurrent with
+  another write, and never concurrent with a read that was already queued
+  ahead of them. The read-then-write sequences inside `update`, `release`,
+  `handoff` and `complete` run inside that same write slot, so a multi-field
+  `update` is applied as one `bd` call and is never interleaved with another
+  request.
+- Reads (`ready`, `search`, `get`) run with bounded concurrency among
+  themselves (`BEADS_READ_CONCURRENCY`, default 8) instead of waiting behind
+  each other. A read queued after a pending or in-flight write still waits for
+  that write to finish first, so a read never observes state from a write that
+  is only partially applied. This is a readers-writer lock, not unbounded
+  concurrency: `src/beads.ts`'s `BeadsClient` implements it with promise
+  chaining rather than a database-level lock.
 - `update`, `release`, `handoff` and `complete` accept `expected_revision`
   (the `state_revision` returned by `get`). If the task changed since that
   read, the call fails with `REVISION_CONFLICT`, **modifies nothing**, and the
@@ -103,6 +113,8 @@ during a crash may or may not have been applied, which is what
 | Change tokens catch notes, labels, and dependencies | same file, against a fake `bd` that reproduces the `updated_at` quirk |
 | Error codes from real subprocess exits | same file, using a stub `bd` executable |
 | Each guarantee is load-bearing | fixes were individually disabled and the suite failed each time |
+| Reads run concurrently and overlap in time, up to the configured bound | `src/hardening.test.ts`, delayed fake commands with an active-count probe |
+| A write never overlaps another write, or a read queued ahead of it; a read queued after a write waits for it | same file |
 
 **Unverified**, and not to be claimed as working:
 
@@ -118,4 +130,8 @@ during a crash may or may not have been applied, which is what
   JWKS endpoint.
 - Behaviour after a `bd` lease would have expired, from a second identity.
 - Multi-replica deployments, Dolt server mode, and failures mid-write.
+- Bounded read concurrency against the real embedded Dolt workspace. Verified
+  so far only against the in-memory fake `bd` in `src/hardening.test.ts`; run
+  `BD_BIN=/path/to/bd npm run test:beads` against a live cluster before
+  relying on concurrent reads in production.
 - Durability over hours or days. A separate recheck is scheduled.

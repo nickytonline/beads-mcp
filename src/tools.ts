@@ -1,6 +1,11 @@
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { Effect, Schema } from "effect";
-import { beads, type BeadsCommand, type BeadsTransaction } from "./beads.ts";
+import {
+  beads,
+  type BeadsClient,
+  type BeadsCommand,
+  type BeadsTransaction,
+} from "./beads.ts";
 import { normalizeActor } from "./auth.ts";
 import { BeadsError, errorPayload } from "./errors.ts";
 import { toMcpSchema } from "./lib/mcp-schema.ts";
@@ -181,10 +186,17 @@ async function assertOwner(
   assertRevision(issue, expected);
 }
 
-/** Keep compound read/write jobs inside the same process-wide queue. */
+/**
+ * Keep compound read/write jobs inside the same process-wide queue.
+ *
+ * `queue.transaction` fully serializes writes; `queue.read` runs read-only
+ * jobs with bounded concurrency but still waits behind any write queued
+ * ahead of it (see `BeadsClient` in beads.ts). Each tool picks one or the
+ * other via its own `readOnly` flag below.
+ */
 export function registerTools(
   server: McpServer,
-  transaction: BeadsTransaction = beads.transaction,
+  queue: Pick<BeadsClient, "transaction" | "read"> = beads,
   authenticatedActor?: string,
 ): void {
   function register<A extends Record<string, unknown>>(
@@ -199,6 +211,7 @@ export function registerTools(
     ) => Promise<unknown>,
     additive = false,
   ) {
+    const enqueue: BeadsTransaction = readOnly ? queue.read : queue.transaction;
     server.registerTool(
       name,
       {
@@ -217,7 +230,7 @@ export function registerTools(
           Effect.gen(function* () {
             const data = yield* Effect.tryPromise({
               try: () =>
-                transaction((run) => execute(args, run, authenticatedActor)),
+                enqueue((run) => execute(args, run, authenticatedActor)),
               catch: (error) => error,
             }).pipe(
               Effect.tapError((error) =>
