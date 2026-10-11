@@ -94,6 +94,17 @@ async function setupHttpClient() {
   return { ...appHarness, client };
 }
 
+function captureLogLines(run: () => Promise<Response>) {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+    lines.push(String(line));
+  });
+  return run().then((response) => {
+    spy.mockRestore();
+    return { response, entries: lines.map((line) => JSON.parse(line)) };
+  });
+}
+
 describe("HTTP app", () => {
   it("serves the health endpoint through Express", async () => {
     const { baseUrl } = await setupHttpServer();
@@ -143,6 +154,29 @@ describe("HTTP app", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     expect(response.status).toBe(200);
+  });
+
+  it("logs a warning and still returns 401 when JWT verification fails", async () => {
+    const { baseUrl } = await setupHttpServer();
+
+    const { response, entries } = await captureLogLines(() =>
+      fetch(`${baseUrl}/mcp`, {
+        method: "POST",
+        headers: { "X-Authenticated-JWT": "invalid-jwt" },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Unauthorized" });
+
+    const authFailure = entries.find(
+      (entry) => entry.message === "JWT verification failed for /mcp request",
+    );
+    expect(authFailure).toMatchObject({
+      logLevel: "WARN",
+      annotations: { error: "invalid token" },
+    });
+    expect(JSON.stringify(authFailure)).not.toContain("invalid-jwt");
   });
 
   it("returns a client error for malformed JSON", async () => {
