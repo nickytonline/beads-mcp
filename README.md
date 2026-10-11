@@ -91,6 +91,22 @@ BD_BIN=/path/to/bd npm run test:beads
 
 The opt-in live test initializes an isolated embedded store and exercises all eleven tools through the HTTP MCP transport, including competing claims, ownership, handoff, and dependency unblocking. Normal tests need no installed Beads executable.
 
+## Latency benchmark
+
+```sh
+npm run bench
+```
+
+`src/bench-latency.ts` drives representative read (`get`, `search`) and write (`create`, `update`) tool calls through `registerTools()` — the same wiring the server and tests use — both sequentially and with 10 concurrent reads per batch, and prints p50/p95/p99 latency split into **bd subprocess** time (spent inside the `BeadsCommand` that `BeadsClient` queues) and **MCP overhead** (schema validation, the Effect workflow, JSON-RPC encode/decode, and queue wait).
+
+By default it runs against the in-memory `fake-bd` stand-in used by the test suite, so it needs no `bd` binary and is CI-safe. Point it at a real `bd` executable for live measurement:
+
+```sh
+BD_BIN=/path/to/bd BEADS_PROJECT_DIR=/tmp/beads-bench npm run bench
+```
+
+In live mode it calls `executeBeads` from `src/beads.ts` directly, so it creates and updates real tasks in the configured store — use a scratch workspace, not a production one. Tune iteration and concurrency counts with `BENCH_ITERATIONS`, `BENCH_CONCURRENCY`, and `BENCH_CONCURRENT_BATCHES`.
+
 ## Container
 
 ```sh
