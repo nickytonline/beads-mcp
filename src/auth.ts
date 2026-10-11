@@ -21,7 +21,7 @@ export type AuthenticatedIdentity = {
   payload: JWTPayload;
 };
 
-const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._@-]*$/;
+const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._@+|:-]*$/;
 
 /** Normalize an identity before it is used as a Beads actor. */
 export function normalizeActor(value: unknown): string | undefined {

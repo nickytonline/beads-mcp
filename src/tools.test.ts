@@ -153,4 +153,55 @@ describe("Beads MCP tools", () => {
         .structuredContent,
     ).toEqual({ data: [] });
   });
+  it("validates the actor field through normalizeActor instead of a duplicate regex", async () => {
+    const run = vi.fn<BeadsCommand>().mockResolvedValue({ id: "task-1" });
+    const client = await setup(run);
+
+    // Mixed-case is accepted (normalizeActor lowercases before testing the
+    // pattern) rather than rejected by a stricter, independent regex.
+    const mixedCase = await client.callTool({
+      name: "create",
+      arguments: { title: "t", actor: "Agent-One" },
+    });
+    expect(mixedCase.isError).toBeFalsy();
+    expect(run).toHaveBeenCalledWith(["create", "--title=t"], "agent-one");
+
+    // The widened charset (+, |, :) added to ACTOR_PATTERN is accepted here
+    // too, since this field now shares validation with normalizeActor.
+    for (const widened of [
+      "user+tag@example.com",
+      "auth0|507f1f77bcf86cd799439011",
+      "us-east-1:1234abcd-5678-efgh",
+    ]) {
+      const result = await client.callTool({
+        name: "create",
+        arguments: { title: "t", actor: widened },
+      });
+      expect(result.isError).toBeFalsy();
+    }
+  });
+  it("rejects actor values normalizeActor would reject", async () => {
+    const run = vi.fn<BeadsCommand>();
+    const client = await setup(run);
+
+    const empty = await client.callTool({
+      name: "create",
+      arguments: { title: "t", actor: "" },
+    });
+    expect(empty.isError).toBe(true);
+
+    const badFirstChar = await client.callTool({
+      name: "create",
+      arguments: { title: "t", actor: "+leading-plus" },
+    });
+    expect(badFirstChar.isError).toBe(true);
+
+    const tooLong = await client.callTool({
+      name: "create",
+      arguments: { title: "t", actor: "a".repeat(129) },
+    });
+    expect(tooLong.isError).toBe(true);
+
+    expect(run).not.toHaveBeenCalled();
+  });
 });

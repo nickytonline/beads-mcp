@@ -43,6 +43,22 @@ describe("JWT identity authentication", () => {
     expect(normalizeActor("alice@example.com/other")).toBeUndefined();
   });
 
+  it("accepts the widened charset: plus-addressed emails and sub-claim identifiers", () => {
+    expect(normalizeActor("user+tag@example.com")).toBe("user+tag@example.com");
+    expect(normalizeActor("auth0|507f1f77bcf86cd799439011")).toBe(
+      "auth0|507f1f77bcf86cd799439011",
+    );
+    expect(normalizeActor("us-east-1:1234abcd-5678-efgh")).toBe(
+      "us-east-1:1234abcd-5678-efgh",
+    );
+  });
+
+  it("still requires an alphanumeric first character", () => {
+    expect(normalizeActor("+user@example.com")).toBeUndefined();
+    expect(normalizeActor("|auth0|abc")).toBeUndefined();
+    expect(normalizeActor(":cognito")).toBeUndefined();
+  });
+
   it("uses the configured claim and falls back to sub", () => {
     expect(
       actorFromPayload(
