@@ -30,7 +30,9 @@ const actor = text(
   "Optional compatibility actor; authenticated requests use the verified identity",
 ).check(
   Schema.isMaxLength(128),
-  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/u),
+  Schema.makeFilter((value: string) => normalizeActor(value) !== undefined, {
+    expected: "a valid actor identity",
+  }),
 );
 const priority = Schema.Int.check(
   Schema.isBetween({ minimum: 0, maximum: 4 }),
