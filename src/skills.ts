@@ -22,9 +22,15 @@ type SkillResource = {
   size: number;
 };
 
+type SkillFrontmatter = {
+  name: string;
+  description: string;
+  [key: string]: unknown;
+};
+
 type SkillEntry = {
   uri: string;
-  frontmatter: Record<string, unknown>;
+  frontmatter: SkillFrontmatter;
   resources: SkillResource[];
 };
 
@@ -45,7 +51,11 @@ const skillRoot = fileURLToPath(
   new URL("../skills/beads-engineering-backlog/", import.meta.url),
 );
 
-function parseFrontmatter(document: string): Record<string, unknown> {
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseFrontmatter(document: string): SkillFrontmatter {
   if (!document.startsWith("---\n")) {
     throw new Error("Skill SKILL.md must start with YAML frontmatter");
   }
@@ -56,13 +66,11 @@ function parseFrontmatter(document: string): Record<string, unknown> {
   }
 
   const parsed = parseYaml(document.slice(4, closingMarker));
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isMapping(parsed)) {
     throw new Error("Skill frontmatter must be a YAML mapping");
   }
 
-  const frontmatter = parsed as Record<string, unknown>;
-  const name = frontmatter.name;
-  const description = frontmatter.description;
+  const { name, description } = parsed;
   if (
     typeof name !== "string" ||
     typeof description !== "string" ||
@@ -74,7 +82,7 @@ function parseFrontmatter(document: string): Record<string, unknown> {
     );
   }
 
-  return frontmatter;
+  return { ...parsed, name, description };
 }
 
 function mimeTypeFor(relativePath: string): string {
@@ -187,13 +195,13 @@ export function registerSkills(server: McpServer): void {
   for (const file of catalog.files.values()) {
     server.registerResource(
       file.relativePath === "SKILL.md"
-        ? (catalog.entry.frontmatter.name as string)
+        ? catalog.entry.frontmatter.name
         : basename(file.relativePath),
       file.uri,
       {
         description:
           file.relativePath === "SKILL.md"
-            ? (catalog.entry.frontmatter.description as string)
+            ? catalog.entry.frontmatter.description
             : undefined,
         mimeType: file.mimeType,
       },
