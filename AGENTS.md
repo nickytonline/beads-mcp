@@ -48,6 +48,8 @@ src/
   revision.ts    # state_revision / activity_revision and lease-field stripping
   config.ts      # Env var loading and validation via Effect Config
   logger.ts      # Effect structured logging
+  skills.ts      # bundled Agent Skill and MCP Skills extension handlers
+  skills.test.ts # skill discovery, manifest integrity, and resource tests
   lib/
     utils.ts       # MCP response helpers (createTextResult, createErrorResult)
     mcp-schema.ts  # Effect Schema adapter for MCP Standard Schema
@@ -57,6 +59,8 @@ src/
     fake-bd.ts     # stateful in-memory bd stand-in for tests
 docs/
   GUARANTEES.md  # what is guaranteed, tested, and still unverified
+skills/
+  beads-engineering-backlog/SKILL.md # canonical Agent Skill for Beads workflows
 dist/            # compiled output (ES modules)
 ```
 
@@ -66,6 +70,7 @@ Config files (`vite.config.ts`, `tsconfig.json`, `eslint.config.js`, `Dockerfile
 
 - HTTP transport via Express on `PORT` (default 3000) — **not** stdio; app wiring lives in `src/app.ts`, startup and shutdown in `src/index.ts`
 - Tools registered via `registerTools(server)` in `src/tools.ts`, the single source of truth for tool wiring — called from `getServer()` in `src/app.ts` and reused by the tests
+- The canonical `beads-engineering-backlog` Agent Skill is registered by `registerSkills(server)` in `src/skills.ts`; it is served through normal MCP resources and the `io.modelcontextprotocol/skills` extension
 - Tool responses use `createTextResult` / `createErrorResult` from `src/lib/utils.ts`: a text `content` block plus `structuredContent` (for clients that declare an `outputSchema`)
 - Tool workflows use `Effect` and cross the MCP callback boundary with `runMcpEffect()`
 - Effect Schemas cross the MCP boundary through `toMcpSchema()`, which supports the MCP SDK's `draft-07` and `draft-2020-12` JSON Schema targets

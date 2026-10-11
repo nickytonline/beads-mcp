@@ -5,6 +5,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { createApp } from "./app.ts";
+import { SKILL_URI } from "./skills.ts";
 
 vi.hoisted(() => {
   process.env.AUTH_JWT_HEADER = "X-Authenticated-JWT";
@@ -108,6 +109,14 @@ describe("HTTP app", () => {
 
     const result = await client.listTools();
     expect(result.tools.some((tool) => tool.name === "ready")).toBe(true);
+    const resources = await client.listResources();
+    expect(
+      resources.resources.some((resource) => resource.uri === SKILL_URI),
+    ).toBe(true);
+    expect(client.getInstructions()).toContain(SKILL_URI);
+    expect(client.getServerCapabilities()?.extensions).toMatchObject({
+      "io.modelcontextprotocol/skills": {},
+    });
   });
 
   it("requires a valid identity JWT while leaving liveness public", async () => {

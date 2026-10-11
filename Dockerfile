@@ -27,9 +27,11 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build --chown=node:node --chmod=644 /app/package.json ./package.json
+COPY --chown=node:node skills ./skills
 COPY --from=beads /out/bd /usr/local/bin/bd
 COPY --chmod=755 scripts/entrypoint.sh /app/entrypoint.sh
-RUN mkdir -p /data/project && chown -R node:node /data
+RUN test -s /app/skills/beads-engineering-backlog/SKILL.md && \
+    mkdir -p /data/project && chown -R node:node /data
 ENV NODE_ENV=production BEADS_PROJECT_DIR=/data/project BEADS_DIR=/data/project/.beads
 USER node
 EXPOSE 3000

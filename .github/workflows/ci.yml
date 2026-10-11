@@ -41,6 +41,9 @@ jobs:
       - name: Build project
         run: npm run build
 
+      - name: Verify packaged skill
+        run: npm run verify:skill-package
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
