@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { makeExecuteBeadsHttp } from "./beads-http.ts";
-import { BeadsError } from "./errors.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeExecuteBeadsHttp, parseBdServeTimeout } from "./beads-http.ts";
 import { stateRevision, withRevisions } from "./revision.ts";
 import {
   createFakeBdServe,
@@ -23,7 +22,11 @@ describe("executeBeadsHttp", () => {
     call = run;
   });
 
-  afterEach(() => fake.close());
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    await fake.close();
+  });
 
   it("create: translates flags into a POST body and returns the issue", async () => {
     const issue = await call(
@@ -174,6 +177,44 @@ describe("executeBeadsHttp", () => {
     });
   });
 
+  it("network failure after dispatch preserves uncertain write outcomes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("connection reset")),
+    );
+    await expect(run(["create", "--title=T"])).rejects.toMatchObject({
+      code: "BACKEND_UNAVAILABLE",
+      retryable: false,
+      outcomeUnknown: true,
+    });
+    await expect(run(["show", "task-id"])).rejects.toMatchObject({
+      code: "BACKEND_UNAVAILABLE",
+      retryable: true,
+      outcomeUnknown: false,
+    });
+  });
+
+  it.each(["TypeError", "AbortError", "TimeoutError"])(
+    "classifies %s while reading a response body",
+    async (name) => {
+      const response = new Response("{}", { status: 200 });
+      const error = new Error("body read failed");
+      error.name = name;
+      vi.spyOn(response, "text").mockRejectedValue(error);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+      await expect(run(["create", "--title=T"])).rejects.toMatchObject({
+        code:
+          name === "TypeError" ? "BACKEND_UNAVAILABLE" : "OUTCOME_UNCERTAIN",
+        retryable: false,
+        outcomeUnknown: true,
+      });
+      await expect(run(["show", "task-id"])).rejects.toMatchObject({
+        retryable: true,
+        outcomeUnknown: false,
+      });
+    },
+  );
+
   it("timeout: maps to OUTCOME_UNCERTAIN for a write, retryable for a read", async () => {
     fake.hangNext("GET", "/v0/beads/issues/");
     await expect(call(["show", "whatever"])).rejects.toMatchObject({
@@ -190,17 +231,42 @@ describe("executeBeadsHttp", () => {
   });
 
   it("malformed 2xx body: fails safe as OUTCOME_UNCERTAIN, never crashes", async () => {
-    fake.failNext("GET", "/v0/beads/issues/", 200, undefined); // empty body, not valid per-route JSON
-    const result = await call(["show", "whatever"]).catch(
-      (error: BeadsError) => error,
-    );
-    // Either it parses fine (unlikely given undefined->"" body) or fails safely.
-    if (result instanceof BeadsError) {
-      expect(["OUTCOME_UNCERTAIN", "NOT_FOUND"]).toContain(result.code);
-    }
+    fake.failNextRaw("GET", "/v0/beads/issues/", 200, "{invalid-json");
+    await expect(run(["show", "whatever"])).rejects.toMatchObject({
+      code: "OUTCOME_UNCERTAIN",
+      retryable: true,
+      outcomeUnknown: false,
+    });
+    fake.failNextRaw("POST", "/v0/beads/issues", 200, "{invalid-json");
+    await expect(run(["create", "--title=T"])).rejects.toMatchObject({
+      code: "OUTCOME_UNCERTAIN",
+      retryable: false,
+      outcomeUnknown: true,
+    });
   });
 
   it("unsupported subcommand: fails INTERNAL rather than silently no-op", async () => {
     await expect(call(["list"])).rejects.toMatchObject({ code: "INTERNAL" });
   });
+});
+
+describe("BD_SERVE_TIMEOUT_MS", () => {
+  it("defaults when unset and accepts positive integer milliseconds", () => {
+    expect(parseBdServeTimeout(undefined)).toBeUndefined();
+    expect(parseBdServeTimeout("30000")).toBe(30_000);
+  });
+  it.each(["", "abc", "NaN", "Infinity", "0", "-1", "1.5", "4294967296"])(
+    "rejects invalid timeout %s before dispatch",
+    (value) => {
+      expect(() => parseBdServeTimeout(value)).toThrow("BD_SERVE_TIMEOUT_MS");
+    },
+  );
+  it.each([NaN, Infinity, 0, -1, 1.5, 4294967296])(
+    "rejects invalid factory timeout %s",
+    (timeoutMs) => {
+      expect(() =>
+        makeExecuteBeadsHttp("http://localhost", { timeoutMs }),
+      ).toThrow();
+    },
+  );
 });

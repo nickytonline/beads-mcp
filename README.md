@@ -93,7 +93,13 @@ BD_BIN=/path/to/bd npm run test:beads
 BD_BIN=/path/to/pinned/bd npm run test:beads-http
 ```
 
-The opt-in live test initializes an isolated embedded store and exercises all eleven tools through the HTTP MCP transport, including competing claims, ownership, handoff, and dependency unblocking. Normal tests need no installed Beads executable.
+`test:beads` requires the pinned Beads 1.3.1 executable. It initializes an
+isolated embedded store and exercises all eleven tools through HTTP MCP,
+including competing claims, ownership, handoff, and dependency unblocking.
+`test:beads-http` requires both Beads 1.3.1 (selected with `BD_BIN`) and `dolt`
+on PATH. It starts an isolated Dolt SQL server and `bd serve` on two local
+ports and exercises the agent workflow through the HTTP executor. Normal
+tests need neither binary.
 
 ## Latency benchmark
 
@@ -160,14 +166,20 @@ the same image with `bd serve --addr=127.0.0.1:8742`; both containers share a
 network namespace, so the HTTP endpoint stays loopback-only and needs no auth
 token. The Dolt SQL server is a separately operated service with its own
 persistent storage. Protect that cross-pod connection with TLS or an mTLS
-service mesh and, where the cluster uses default-deny policies, allow only the
-sidecar-to-Dolt traffic.
+service mesh and, where the cluster uses default-deny policies, allow the
+MCP Pod to reach Dolt.
 
 This mode is default-off and does not change the MCP tool schemas, FIFO queue,
 error codes, or client-computed revision/CAS behavior. It does require a
 server-mode workspace and a migration/rollback plan for data currently in
 embedded Dolt. Do not point `BD_SERVE_URL` at a shared public endpoint unless
 you configure authentication and transport security.
+
+In HTTP mode, adding/removing labels reads the current labels and PATCHes the
+complete array. Direct CLI users, other `bd serve` clients, or other MCP
+processes can change labels between those requests and have their changes
+overwritten. `expected_revision` protects callers through the same MCP queue;
+it does not provide a database-level conditional write against external writers.
 
 #### Migrating an existing embedded workspace
 
@@ -206,21 +218,33 @@ services:
 
   bd-serve:
     image: <registry>/beads-mcp:<tag>
+    entrypoint: ["/bin/sh", "-ec"]
     environment:
       BEADS_PROJECT_DIR: /data/project
       BEADS_DIR: /data/project/.beads
       BEADS_DOLT_PASSWORD: ${DOLT_PASSWORD:?set DOLT_PASSWORD}
+      DOLT_USER: ${DOLT_USER:-root}
       BD_SERVE_URL: http://127.0.0.1:8742
     volumes:
       - bd-workspace:/data/project
     depends_on:
       - dolt-sql
-    command: >-
-      sh -ec 'bd init --init-if-missing --external --server
-      --server-host=dolt-sql --server-port=3306
-      --server-user=root
-      --prefix=task --skip-agents --skip-hooks --non-interactive
-      && exec bd serve --addr=127.0.0.1:8742'
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8742/v0/beads/ready?limit=1').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    command:
+      - >-
+        cd /data/project; attempt=0;
+        until bd init --init-if-missing --external --server
+        --server-host=dolt-sql --server-port=3306
+        --server-user="$$DOLT_USER"
+        --prefix=task --skip-agents --skip-hooks --non-interactive; do
+        attempt=$$((attempt + 1)); [ "$$attempt" -lt 30 ] || exit 1;
+        sleep 2; done; exec bd serve --addr=127.0.0.1:8742
 
   mcp:
     image: <registry>/beads-mcp:<tag>
@@ -228,8 +252,11 @@ services:
     environment:
       BD_SERVE_URL: http://127.0.0.1:8742
       BD_SERVE_TIMEOUT_MS: 30000
+      # Add the required AUTH_JWKS_URL, AUTH_ISSUER, and AUTH_AUDIENCE settings.
     depends_on:
-      - bd-serve
+      bd-serve:
+        condition: service_healthy
+    restart: on-failure
 
 volumes:
   bd-workspace:
@@ -239,6 +266,9 @@ Initialize the server-mode workspace once, verify task/dependency counts and
 claims, then run the MCP service with `BD_SERVE_URL` set. Compose has no
 NetworkPolicy equivalent; keep the project network private and configure TLS
 for the Dolt connection.
+Initialization retries allow Dolt to become ready; the sidecar health check
+then gates MCP startup. Access `/mcp` on `http://127.0.0.1:3000` with a signed
+JWT, or put an HTTPS proxy in front of that listener. Port 8742 is unpublished.
 
 ### Kubernetes
 
@@ -253,7 +283,13 @@ metadata:
   name: beads-mcp
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: beads-mcp
   template:
+    metadata:
+      labels:
+        app: beads-mcp
     spec:
       containers:
         - name: mcp
@@ -267,6 +303,7 @@ spec:
             - containerPort: 3000
         - name: bd-serve
           image: <registry>/beads-mcp:<tag>
+          workingDir: /data/project
           command: ["/bin/sh", "-ec"]
           args:
             - >-
@@ -282,9 +319,6 @@ spec:
             - name: DOLT_USER
               valueFrom:
                 secretKeyRef: {name: dolt-credentials, key: user}
-            - name: DOLT_PASSWORD
-              valueFrom:
-                secretKeyRef: {name: dolt-credentials, key: password}
             - name: BEADS_DOLT_PASSWORD
               valueFrom:
                 secretKeyRef: {name: dolt-credentials, key: password}
@@ -299,7 +333,11 @@ spec:
 Deploy the Dolt SQL server separately as a StatefulSet/Service with pinned
 versions, persistent storage, credentials, backups, and TLS. The MCP-to-
 `bd serve` hop is loopback and does not need a NetworkPolicy. If the cluster
-uses default-deny policies, add a policy allowing only the `bd-serve` container
-to connect to the Dolt SQL Service on its SQL/TLS port. Keep `replicas: 1` until
+uses default-deny policies, allow Pods labeled `app: beads-mcp` to connect to
+the Dolt SQL Service on its SQL/TLS port. NetworkPolicy selects Pods, so both
+containers receive that access. Independent policy boundaries require separate
+Pods and a secured HTTP connection between them. Add the required JWT settings
+to the MCP container and expose port 3000 through a Service and HTTPS ingress.
+Keep `replicas: 1` until
 cross-pod ownership races and database-backed conditional writes have been
 validated; HTTP execution mode and multi-replica scaling are separate concerns.

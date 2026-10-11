@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { BeadsError, classifyFailure } from "./errors.ts";
-import { makeExecuteBeadsHttp } from "./beads-http.ts";
+import { makeExecuteBeadsHttp, parseBdServeTimeout } from "./beads-http.ts";
 
 export type BeadsCommand = (args: string[], actor?: string) => Promise<unknown>;
 export type BeadsTransaction = <T>(
@@ -58,9 +58,7 @@ const bdServeUrl = process.env.BD_SERVE_URL;
 export const beads = new BeadsClient(
   bdServeUrl
     ? makeExecuteBeadsHttp(bdServeUrl, {
-        timeoutMs: process.env.BD_SERVE_TIMEOUT_MS
-          ? Number(process.env.BD_SERVE_TIMEOUT_MS)
-          : undefined,
+        timeoutMs: parseBdServeTimeout(process.env.BD_SERVE_TIMEOUT_MS),
         authTokenFile: process.env.BD_SERVE_AUTH_TOKEN_FILE,
       })
     : executeBeads,

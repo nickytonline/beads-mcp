@@ -178,7 +178,7 @@ export function classifyHttpFailure(input: HttpFailureInput): BeadsError {
     return new BeadsError(
       "BACKEND_UNAVAILABLE",
       "Beads serve endpoint is unreachable",
-      { retryable: !write },
+      { retryable: !write, outcomeUnknown: write },
     );
   }
   if (input.aborted) {

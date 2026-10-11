@@ -52,11 +52,31 @@ export interface BdServeOptions {
   authTokenFile?: string;
 }
 
+/** Parse the optional environment timeout before accepting requests. */
+export function parseBdServeTimeout(
+  value: string | undefined,
+): number | undefined {
+  if (value === undefined) return undefined;
+  const timeout = Number(value);
+  validateTimeout(timeout);
+  return timeout;
+}
+
+/** Match the range accepted by Node's AbortSignal.timeout. */
+function validateTimeout(timeout: number): void {
+  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 4_294_967_295) {
+    throw new Error(
+      "BD_SERVE_TIMEOUT_MS must be a positive integer at most 4294967295",
+    );
+  }
+}
+
 export function makeExecuteBeadsHttp(
   baseUrl: string,
   options: BdServeOptions = {},
 ): BeadsCommand {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  validateTimeout(timeoutMs);
   const token = options.authTokenFile
     ? readFileSync(options.authTokenFile, "utf8")
         .split("\n")
@@ -72,6 +92,8 @@ export function makeExecuteBeadsHttp(
   ): Promise<unknown> {
     const url = new URL(path, baseUrl);
     let response: Response;
+    let text: string;
+    const signal = AbortSignal.timeout(timeoutMs);
     try {
       response = await fetch(url, {
         method,
@@ -80,13 +102,16 @@ export function makeExecuteBeadsHttp(
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal,
       });
+      text = await response.text();
     } catch (error) {
-      const aborted = error instanceof Error && error.name === "TimeoutError";
+      const aborted =
+        signal.aborted ||
+        (error instanceof Error &&
+          (error.name === "TimeoutError" || error.name === "AbortError"));
       throw classifyHttpFailure({ aborted, networkError: !aborted, write });
     }
-    const text = await response.text();
     const parsed = text.trim() ? safeJsonParse(text) : null;
     if (!response.ok) {
       throw classifyHttpFailure({
@@ -220,6 +245,8 @@ export function makeExecuteBeadsHttp(
       flags["add-label"] !== undefined ||
       flags["remove-label"] !== undefined
     ) {
+      // PATCH replaces labels. The local queue protects MCP callers only;
+      // external writers can change labels between this GET and PATCH.
       const current = await call(
         "GET",
         `/v0/beads/issues/${encodeURIComponent(id)}`,

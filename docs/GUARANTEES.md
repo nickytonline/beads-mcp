@@ -48,6 +48,12 @@ authenticated HTTP writes always use the verified actor from request context.
 - The check and the write are atomic with respect to other requests through
   this process. They are not a database transaction, and they are not safe
   across multiple replicas (see the README section on replicas).
+- In HTTP mode, label edits perform a GET followed by a PATCH of the complete
+  labels array. An external writer can change labels between those requests;
+  its changes may be overwritten. The HTTP compare-and-swap guarantee excludes
+  concurrent label changes from direct CLI users, other HTTP clients, or other
+  MCP processes. All revision checks remain local to the MCP queue, rather
+  than database-level conditional writes.
 - Compound operations are not transactional: `handoff` with `release` records
   the note, then releases. If the release fails the note remains and a warning
   is returned.

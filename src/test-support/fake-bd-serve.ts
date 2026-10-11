@@ -51,6 +51,13 @@ export interface FakeBdServe {
     status: number,
     body: unknown,
   ): void;
+  /** Return literal response text, including invalid JSON. */
+  failNextRaw(
+    method: string,
+    pathPrefix: string,
+    status: number,
+    body: string,
+  ): void;
   /** The next matching request never responds (for timeout tests). */
   hangNext(method: string, pathPrefix: string): void;
 }
@@ -63,6 +70,7 @@ export function createFakeBdServe(): Promise<FakeBdServe> {
     pathPrefix: string;
     status: number;
     body: unknown;
+    raw?: boolean;
   }> = [];
   const pendingHangs: Array<{ method: string; pathPrefix: string }> = [];
 
@@ -125,6 +133,11 @@ export function createFakeBdServe(): Promise<FakeBdServe> {
 
       const failure = takeFailure(method, pathname);
       if (failure) {
+        if (failure.raw) {
+          res.writeHead(failure.status, { "Content-Type": "application/json" });
+          res.end(String(failure.body));
+          return;
+        }
         sendJson(res, failure.status, failure.body);
         return;
       }
@@ -353,6 +366,9 @@ export function createFakeBdServe(): Promise<FakeBdServe> {
         issues,
         failNext(method, pathPrefix, status, body) {
           pendingFailures.push({ method, pathPrefix, status, body });
+        },
+        failNextRaw(method, pathPrefix, status, body) {
+          pendingFailures.push({ method, pathPrefix, status, body, raw: true });
         },
         hangNext(method, pathPrefix) {
           pendingHangs.push({ method, pathPrefix });
