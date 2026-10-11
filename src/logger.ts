@@ -1,4 +1,4 @@
-import { Effect, LogLevel, Logger, References } from "effect";
+import { Effect, Formatter, LogLevel, Logger, References } from "effect";
 import { getConfig } from "./config.ts";
 
 type LogFields = Readonly<Record<string, unknown>>;
@@ -13,8 +13,17 @@ const minimumLevel = {
 
 type ConfigLogLevel = "error" | "warn" | "info" | "debug";
 
+// Effect 4 renamed the JSON log field `logLevel` to `level`; keep the
+// original name so log pipelines filtering on it keep working.
+const jsonLogger = Logger.formatStructured.pipe(
+  Logger.map(({ message, level, ...rest }) =>
+    Formatter.formatJson({ message, logLevel: level, ...rest }),
+  ),
+  Logger.withConsoleLog,
+);
+
 const jsonLoggers: ReadonlySet<Logger.Logger<unknown, unknown>> = new Set([
-  Logger.consoleJson,
+  jsonLogger,
 ]);
 
 function log(
