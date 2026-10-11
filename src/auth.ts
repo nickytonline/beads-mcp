@@ -1,5 +1,6 @@
 import {
   createRemoteJWKSet,
+  errors,
   jwtVerify,
   type JWTPayload,
   type JWTVerifyGetKey,
@@ -20,6 +21,19 @@ export type AuthenticatedIdentity = {
   expiresAt: number;
   payload: JWTPayload;
 };
+
+/** The JWKS provider failed before a verification key could be resolved. */
+export class JwksRetrievalError extends Error {
+  constructor(cause: unknown) {
+    super(
+      cause instanceof Error ? cause.message : "JWKS key retrieval failed",
+      {
+        cause,
+      },
+    );
+    this.name = "JwksRetrievalError";
+  }
+}
 
 const ACTOR_PATTERN = /^[a-z0-9][a-z0-9._@+|:-]*$/;
 
@@ -50,7 +64,26 @@ export function actorFromPayload(
 }
 
 export function createJwtKeySet(url: string): JwtKeySet {
-  return createRemoteJWKSet(new URL(url));
+  const keySet = createRemoteJWKSet(new URL(url));
+  return async (header, token) => {
+    try {
+      return await keySet(header, token);
+    } catch (error) {
+      // Key selection can fail because of the token's kid or alg even when
+      // the provider returned a valid JWKS. These remain authentication errors.
+      if (
+        error instanceof errors.JWKSNoMatchingKey ||
+        error instanceof errors.JWKSMultipleMatchingKeys ||
+        error instanceof errors.JOSENotSupported
+      ) {
+        throw error;
+      }
+      // Classify at the resolver boundary: jose also uses generic JOSEError
+      // and native fetch/import errors for provider failures. Token parsing,
+      // signature verification, and claim validation happen outside it.
+      throw new JwksRetrievalError(error);
+    }
+  };
 }
 
 export async function verifyJwtIdentity(

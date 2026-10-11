@@ -61,6 +61,8 @@ BEADS_PROJECT_DIR=/tmp/beads-project npm run dev
 
 Connect a client to `http://localhost:3000/mcp` and send a signed JWT in the configured identity header. The server verifies the JWT signature using the configured JWKS URL and validates issuer, audience, and expiration in every environment.
 
+**Authentication status correction:** `/mcp` returns HTTP 401 with `{ "error": "Unauthorized" }` for missing or invalid tokens, including expired tokens, invalid signatures or claims, unsupported algorithms, and unknown or ambiguous signing keys. JWKS retrieval failures (network errors, timeouts, non-200 responses, malformed JSON or key sets, and unusable provider keys) return HTTP 503 with `{ "error": "Authentication service unavailable" }`. These provider failures previously returned 401. Clients must handle 503 as a service failure and may retry later; it does not mean the token should be replaced. Both paths reject the request before MCP tools run. `/health` remains public and reports liveness during a JWKS outage.
+
 | Environment | Default | Purpose |
 | --- | --- | --- |
 | `BEADS_PROJECT_DIR` | Current directory; `/data/project` in image | CLI working directory |

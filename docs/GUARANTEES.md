@@ -32,6 +32,16 @@ Caller-supplied `actor` fields remain in tool schemas for compatibility, but
 authenticated HTTP writes always use the verified actor from request context.
 `/health` is intentionally unauthenticated.
 
+Missing or invalid tokens return HTTP 401 (`Unauthorized`). Unsupported token
+algorithms and unknown or ambiguous signing keys also return 401. Failures while
+retrieving or importing the provider's JWKS keys return HTTP 503
+(`Authentication service unavailable`), including network errors, timeouts,
+non-200 responses, invalid JSON, and malformed JWKS documents. Both paths reject
+the request before any MCP tool runs, return generic response bodies, and log
+verification failures on the server. This corrects the HTTP status for JWKS
+provider failures, which previously returned 401; clients should handle 503 as a
+service failure that may be retried later.
+
 ## Concurrency
 
 - Every `bd` invocation, including reads and the read-then-write sequences
@@ -127,6 +137,7 @@ cross-pod ownership and conditional-write behavior are explicitly tested.
 
 | Claim | Evidence |
 | --- | --- |
+| Invalid tokens return 401; JWKS retrieval failures return 503; cached keys and outage recovery work | `src/app.auth.test.ts`, real signed JWTs and a local JWKS HTTP endpoint, including provider HTTP errors, invalid JSON, malformed key sets, disconnects, and timeouts |
 | Single winner for contested claims and for same-revision writers | `src/hardening.test.ts`, 8 and 20 concurrent callers, assertions on persisted state |
 | Stale writes rejected, nothing modified | same file, including races with release and claim |
 | Change tokens catch notes, labels, and dependencies | same file, against a fake `bd` that reproduces the `updated_at` quirk |

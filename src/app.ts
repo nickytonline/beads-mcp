@@ -13,6 +13,7 @@ import { getSkillsInstructions, registerSkills } from "./skills.ts";
 import { runMcpEffect } from "./lib/utils.ts";
 import {
   createJwtKeySet,
+  JwksRetrievalError,
   verifyJwtIdentity,
   type AuthenticatedIdentity,
 } from "./auth.ts";
@@ -106,7 +107,11 @@ export function createApp(
           "JWT verification failed for /mcp request",
         ),
       );
-      res.status(401).json({ error: "Unauthorized" });
+      if (error instanceof JwksRetrievalError) {
+        res.status(503).json({ error: "Authentication service unavailable" });
+      } else {
+        res.status(401).json({ error: "Unauthorized" });
+      }
     }
   });
   app.use(express.json({ limit: "128kb" }));
