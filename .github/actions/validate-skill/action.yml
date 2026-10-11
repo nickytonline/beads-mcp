@@ -1,0 +1,24 @@
+name: Validate Agent Skill
+description: Set up Go, validate the packaged Agent Skill, and verify the npm-packaged skill output.
+
+inputs:
+  skill-path:
+    description: Path to the Agent Skill directory to validate.
+    required: false
+    default: skills/beads-engineering-backlog
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26.x'
+
+    - name: Validate Agent Skill
+      shell: bash
+      run: go run github.com/skills-repos/agentskills/skills-ref/cmd/skills-ref@v0.0.1 validate ${{ inputs.skill-path }}
+
+    - name: Verify packaged skill
+      shell: bash
+      run: npm run verify:skill-package
