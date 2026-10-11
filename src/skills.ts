@@ -204,6 +204,7 @@ export function registerSkills(server: McpServer): void {
             ? catalog.entry.frontmatter.description
             : undefined,
         mimeType: file.mimeType,
+        cacheHint: { ttlMs: CACHE_TTL_MS, cacheScope: "public" },
       },
       async (uri: URL, _ctx: ServerContext) => readResource(file, uri),
     );

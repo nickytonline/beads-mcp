@@ -120,6 +120,10 @@ describe("Beads engineering skill extension", () => {
     });
 
     const readResponse = await request("resources/read", { uri: SKILL_URI });
+    expect(readResponse.result).toMatchObject({
+      ttlMs: 300_000,
+      cacheScope: "public",
+    });
     const contents = (
       readResponse.result?.contents as Array<{
         text: string;
