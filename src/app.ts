@@ -99,7 +99,13 @@ export function createApp(
       };
       (req as typeof req & { auth: AuthInfo }).auth = auth;
       next();
-    } catch {
+    } catch (error) {
+      void runMcpEffect(
+        logger.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          "JWT verification failed for /mcp request",
+        ),
+      );
       res.status(401).json({ error: "Unauthorized" });
     }
   });
