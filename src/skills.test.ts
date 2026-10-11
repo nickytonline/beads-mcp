@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { getSkillsInstructions, registerSkills, SKILL_URI } from "./skills.ts";
+import {
+  getSkillsInstructions,
+  parseFrontmatter,
+  registerSkills,
+  SKILL_URI,
+} from "./skills.ts";
 
 type JsonRpcResponse = {
   result?: Record<string, unknown>;
@@ -142,5 +147,59 @@ describe("Beads engineering skill extension", () => {
       uri: "skill://missing/SKILL.md",
     });
     expect(response.error?.code).toBe(-32602);
+  });
+});
+
+describe("parseFrontmatter", () => {
+  it("parses a standard LF frontmatter block", () => {
+    const frontmatter = parseFrontmatter(
+      "---\nname: example\ndescription: An example skill.\n---\nBody text.",
+    );
+    expect(frontmatter).toMatchObject({
+      name: "example",
+      description: "An example skill.",
+    });
+  });
+
+  it("tolerates trailing whitespace on the closing fence line", () => {
+    const frontmatter = parseFrontmatter(
+      "---\nname: example\ndescription: An example skill.\n---   \nBody text.",
+    );
+    expect(frontmatter).toMatchObject({
+      name: "example",
+      description: "An example skill.",
+    });
+  });
+
+  it("tolerates CRLF line endings throughout the document", () => {
+    const frontmatter = parseFrontmatter(
+      "---\r\nname: example\r\ndescription: An example skill.\r\n---\r\nBody text.",
+    );
+    expect(frontmatter).toMatchObject({
+      name: "example",
+      description: "An example skill.",
+    });
+  });
+
+  it("tolerates CRLF with trailing whitespace on the closing fence line", () => {
+    const frontmatter = parseFrontmatter(
+      "---\r\nname: example\r\ndescription: An example skill.\r\n---  \r\nBody text.",
+    );
+    expect(frontmatter).toMatchObject({
+      name: "example",
+      description: "An example skill.",
+    });
+  });
+
+  it("still throws when there is no opening frontmatter marker", () => {
+    expect(() => parseFrontmatter("name: example\n---\n")).toThrow(
+      "Skill SKILL.md must start with YAML frontmatter",
+    );
+  });
+
+  it("still throws when there is no closing frontmatter marker", () => {
+    expect(() => parseFrontmatter("---\nname: example\n")).toThrow(
+      "Skill SKILL.md has no closing YAML frontmatter marker",
+    );
   });
 });
