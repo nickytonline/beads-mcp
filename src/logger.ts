@@ -1,20 +1,33 @@
-import { Effect, LogLevel, Logger } from "effect";
+import { Effect, Formatter, LogLevel, Logger, References } from "effect";
 import { getConfig } from "./config.ts";
 
 type LogFields = Readonly<Record<string, unknown>>;
 type LogInput = LogFields | string;
 
 const minimumLevel = {
-  error: LogLevel.Error,
-  warn: LogLevel.Warning,
-  info: LogLevel.Info,
-  debug: LogLevel.Debug,
-} satisfies Record<ConfigLogLevel, LogLevel.LogLevel>;
+  error: "Error",
+  warn: "Warn",
+  info: "Info",
+  debug: "Debug",
+} satisfies Record<ConfigLogLevel, LogLevel.Severity>;
 
 type ConfigLogLevel = "error" | "warn" | "info" | "debug";
 
+// Effect 4 renamed the JSON log field `logLevel` to `level`; keep the
+// original name so log pipelines filtering on it keep working.
+const jsonLogger = Logger.formatStructured.pipe(
+  Logger.map(({ message, level, ...rest }) =>
+    Formatter.formatJson({ message, logLevel: level, ...rest }),
+  ),
+  Logger.withConsoleLog,
+);
+
+const jsonLoggers: ReadonlySet<Logger.Logger<unknown, unknown>> = new Set([
+  jsonLogger,
+]);
+
 function log(
-  level: LogLevel.LogLevel,
+  level: LogLevel.Severity,
   fieldsOrMessage: LogInput,
   message?: string,
 ) {
@@ -23,26 +36,29 @@ function log(
   const text =
     typeof fieldsOrMessage === "string" ? fieldsOrMessage : (message ?? "");
 
-  return Effect.logWithLevel(level, text).pipe(
+  return Effect.logWithLevel(level)(text).pipe(
     Effect.annotateLogs({
       service: config.SERVER_NAME,
       version: config.SERVER_VERSION,
       environment: config.NODE_ENV,
       ...fields,
     }),
-    Logger.withMinimumLogLevel(minimumLevel[config.LOG_LEVEL]),
-    Effect.provide(Logger.json),
+    Effect.provideService(
+      References.MinimumLogLevel,
+      minimumLevel[config.LOG_LEVEL],
+    ),
+    Effect.provideService(Logger.CurrentLoggers, jsonLoggers),
   );
 }
 
 /** Structured Effect logging used by the server and tool workflows. */
 export const logger = {
   debug: (fieldsOrMessage: LogInput, message?: string) =>
-    log(LogLevel.Debug, fieldsOrMessage, message),
+    log("Debug", fieldsOrMessage, message),
   info: (fieldsOrMessage: LogInput, message?: string) =>
-    log(LogLevel.Info, fieldsOrMessage, message),
+    log("Info", fieldsOrMessage, message),
   warn: (fieldsOrMessage: LogInput, message?: string) =>
-    log(LogLevel.Warning, fieldsOrMessage, message),
+    log("Warn", fieldsOrMessage, message),
   error: (fieldsOrMessage: LogInput, message?: string) =>
-    log(LogLevel.Error, fieldsOrMessage, message),
+    log("Error", fieldsOrMessage, message),
 };

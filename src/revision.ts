@@ -29,7 +29,7 @@ const STATE_FIELDS = [
 ] as const;
 
 const REVISION_PREFIX = "s1-";
-export const REVISION_PATTERN = /^s1-[0-9a-f]{16}$/;
+export const REVISION_PATTERN = /^s1-[0-9a-f]{16}$/u;
 
 function digest(payload: unknown): string {
   return createHash("sha256")

@@ -43,6 +43,33 @@ describe("Beads MCP tools", () => {
       true,
     );
   });
+  it("advertises input constraints that match validation", async () => {
+    const client = await setup();
+    const { tools } = await client.listTools();
+    const update = tools.find((tool) => tool.name === "update");
+    const properties = update?.inputSchema.properties as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(properties.id).toMatchObject({
+      type: "string",
+      minLength: 1,
+      maxLength: 16_000,
+      pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+    });
+    expect(properties.expected_revision).toMatchObject({
+      pattern: "^s1-[0-9a-f]{16}$",
+    });
+    // Optional fields are omitted, never null; advertising null would invite
+    // calls that validation then rejects.
+    expect(properties.priority).toEqual({
+      type: "integer",
+      minimum: 0,
+      maximum: 4,
+      description: "Priority: 0 highest, 4 lowest",
+    });
+    expect(update?.inputSchema.required).toEqual(["id"]);
+  });
   it("passes user text as a single flag value without shell interpolation", async () => {
     const run = vi.fn<BeadsCommand>().mockResolvedValue({ id: "task-1" });
     const client = await setup(run);

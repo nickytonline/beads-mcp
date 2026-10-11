@@ -20,7 +20,7 @@ const main = Effect.gen(function* () {
   });
   const { app, handler } = createApp();
 
-  const httpServer = yield* Effect.async<HttpServer, unknown>((resume) => {
+  const httpServer = yield* Effect.callback<HttpServer, unknown>((resume) => {
     const server = app.listen(config.PORT, () => {
       resume(Effect.succeed(server));
     });

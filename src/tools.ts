@@ -19,35 +19,39 @@ import {
 import { logger } from "./logger.ts";
 
 const text = (description: string) =>
-  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_000)).annotations(
-    { description },
-  );
-const id = text("Full Beads issue ID").pipe(
-  Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/),
+  Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(16_000),
+  ).annotate({ description });
+const id = text("Full Beads issue ID").check(
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u),
 );
 const actor = text(
   "Optional compatibility actor; authenticated requests use the verified identity",
-).pipe(Schema.maxLength(128), Schema.pattern(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/));
-const priority = Schema.Int.pipe(Schema.between(0, 4)).annotations({
-  description: "Priority: 0 highest, 4 lowest",
-});
-const status = Schema.Literal(
+).check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._@-]*$/u),
+);
+const priority = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: 4 }),
+).annotate({ description: "Priority: 0 highest, 4 lowest" });
+const status = Schema.Literals([
   "open",
   "in_progress",
   "blocked",
   "deferred",
-).annotations({ description: "Task status; use complete to close" });
-const limit = Schema.optional(
-  Schema.Int.pipe(Schema.between(1, 100)).annotations({
+]).annotate({ description: "Task status; use complete to close" });
+const limit = Schema.optionalKey(
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).annotate({
     description: "Maximum results, default 20",
   }),
 );
-const opt = Schema.optional;
+const opt = Schema.optionalKey;
 const optionalActor = opt(actor);
 const expectedRevision = opt(
   text(
     "state_revision from get. If the task changed since you read it, the write is rejected with REVISION_CONFLICT and nothing is modified. Omit for last-writer-wins.",
-  ).pipe(Schema.pattern(REVISION_PATTERN)),
+  ).check(Schema.isPattern(REVISION_PATTERN)),
 );
 const issueFields = {
   title: opt(text("Task title")),
@@ -57,7 +61,7 @@ const issueFields = {
 };
 const outputSchema = toMcpSchema(
   Schema.Struct({
-    data: Schema.Unknown.annotations({
+    data: Schema.Unknown.annotate({
       description:
         "Native Beads JSON result; compound operations return named fields",
     }),
@@ -184,7 +188,7 @@ export function registerTools(
   function register<A extends Record<string, unknown>>(
     name: string,
     description: string,
-    inputSchema: Schema.Schema<A, A, never>,
+    inputSchema: Schema.Codec<A>,
     readOnly: boolean,
     execute: (
       args: A,
@@ -231,7 +235,7 @@ export function registerTools(
             );
             return createTextResult({ data: stripLeaseMetadata(data) });
           }).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.succeed(createErrorResult(errorPayload(error))),
             ),
           ),
@@ -263,14 +267,14 @@ export function registerTools(
       query: text("Search text"),
       limit,
       status: opt(
-        Schema.Literal(
+        Schema.Literals([
           "open",
           "in_progress",
           "blocked",
           "deferred",
           "closed",
           "all",
-        ),
+        ]),
       ),
       assignee: opt(actor),
       label: opt(text("Required labels, comma-separated")),
@@ -318,7 +322,14 @@ export function registerTools(
       title: text("Task title"),
       actor: optionalActor,
       type: opt(
-        Schema.Literal("task", "bug", "feature", "epic", "chore", "decision"),
+        Schema.Literals([
+          "task",
+          "bug",
+          "feature",
+          "epic",
+          "chore",
+          "decision",
+        ]),
       ),
       labels: opt(text("Comma-separated labels")),
       parent: opt(id),
@@ -437,16 +448,16 @@ export function registerTools(
       id,
       target: id,
       actor: optionalActor,
-      action: Schema.Literal("add", "remove"),
+      action: Schema.Literals(["add", "remove"]),
       type: opt(
-        Schema.Literal(
+        Schema.Literals([
           "blocks",
           "parent-child",
           "related",
           "discovered-from",
           "relates-to",
           "supersedes",
-        ),
+        ]),
       ),
     }),
     false,
@@ -496,7 +507,7 @@ export function registerTools(
       remaining: text("Work still needed"),
       next: text("Next concrete action"),
       release: opt(
-        Schema.Boolean.annotations({
+        Schema.Boolean.annotate({
           description: "Release claim after recording handoff; default false",
         }),
       ),

@@ -1,32 +1,39 @@
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
-import { JSONSchema, Schema } from "effect";
+import { JsonSchema, Schema } from "effect";
 
 type McpJsonSchemaOptions = Parameters<
   StandardSchemaWithJSON["~standard"]["jsonSchema"]["input"]
 >[0];
 
-function toEffectJsonSchemaTarget(
-  target: McpJsonSchemaOptions["target"],
-): "jsonSchema7" | "jsonSchema2020-12" {
-  switch (target) {
-    case "draft-07":
-      return "jsonSchema7";
-    case "draft-2020-12":
-      return "jsonSchema2020-12";
-    default:
-      throw new Error(
-        `Unsupported MCP JSON Schema target: ${String(target)}. Effect supports draft-07 and draft-2020-12.`,
-      );
-  }
-}
-
-function makeMcpJsonSchema<Output, Input>(
-  schema: Schema.Schema<Output, Input>,
+function makeMcpJsonSchema(
+  schema: Schema.Top,
   options: McpJsonSchemaOptions,
 ): Record<string, unknown> {
-  return JSONSchema.make(schema, {
-    target: toEffectJsonSchemaTarget(options.target),
-  }) as unknown as Record<string, unknown>;
+  const document = Schema.toJsonSchemaDocument(schema);
+  switch (options.target) {
+    case "draft-07": {
+      const draft07 = JsonSchema.toDocumentDraft07(document);
+      return {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        ...draft07.schema,
+        ...(Object.keys(draft07.definitions).length > 0
+          ? { definitions: draft07.definitions }
+          : {}),
+      };
+    }
+    case "draft-2020-12":
+      return {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        ...document.schema,
+        ...(Object.keys(document.definitions).length > 0
+          ? { $defs: document.definitions }
+          : {}),
+      };
+    default:
+      throw new Error(
+        `Unsupported MCP JSON Schema target: ${String(options.target)}. Effect supports draft-07 and draft-2020-12.`,
+      );
+  }
 }
 
 /**
@@ -38,17 +45,16 @@ function makeMcpJsonSchema<Output, Input>(
  * wire, so this adapter supplies that one additional capability.
  */
 export function toMcpSchema<Output, Input = Output>(
-  schema: Schema.Schema<Output, Input>,
+  schema: Schema.Codec<Output, Input>,
 ): StandardSchemaWithJSON<Input, Output> {
-  const standard = Schema.standardSchemaV1(schema);
+  const standard = Schema.toStandardSchemaV1(schema);
 
   const adapted = {
-    ...standard,
     "~standard": {
       ...standard["~standard"],
       jsonSchema: {
         input: (options) => makeMcpJsonSchema(schema, options),
-        output: (options) => makeMcpJsonSchema(schema, options),
+        output: (options) => makeMcpJsonSchema(Schema.toType(schema), options),
       },
     },
   } satisfies StandardSchemaWithJSON<Input, Output>;
