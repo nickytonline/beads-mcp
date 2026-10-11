@@ -22,7 +22,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "verify:skill-package": "node scripts/verify-skill-package.mjs",
-    "test:beads": "BEADS_LIVE_TEST=1 vitest run src/beads.live.test.ts"
+    "test:beads": "BEADS_LIVE_TEST=1 vitest run src/beads.live.test.ts",
+    "test:beads-http": "BD_SERVE_LIVE_TEST=1 vitest run src/beads-http.live.test.ts"
   },
   "keywords": [
     "mcp",

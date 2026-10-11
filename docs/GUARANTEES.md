@@ -2,6 +2,9 @@
 
 What this server promises, what it does not, and how each promise is tested.
 Scope: one MCP process, one replica, embedded Dolt (the shipped configuration).
+The optional `BD_SERVE_URL` mode uses the same process and queue guarantees
+against a colocated `bd serve` sidecar and a Dolt SQL server; it is separately
+deployed and remains default-off.
 
 ## Ownership
 
@@ -45,6 +48,12 @@ authenticated HTTP writes always use the verified actor from request context.
 - The check and the write are atomic with respect to other requests through
   this process. They are not a database transaction, and they are not safe
   across multiple replicas (see the README section on replicas).
+- In HTTP mode, label edits perform a GET followed by a PATCH of the complete
+  labels array. An external writer can change labels between those requests;
+  its changes may be overwritten. The HTTP compare-and-swap guarantee excludes
+  concurrent label changes from direct CLI users, other HTTP clients, or other
+  MCP processes. All revision checks remain local to the MCP queue, rather
+  than database-level conditional writes.
 - Compound operations are not transactional: `handoff` with `release` records
   the note, then releases. If the release fails the note remains and a warning
   is returned.
@@ -93,6 +102,26 @@ Task state lives in embedded Dolt on a persistent volume and survives restarts
 and client changes. The in-process queue is memory only: requests in flight
 during a crash may or may not have been applied, which is what
 `outcome_unknown` is for.
+
+## Performance
+
+The default embedded-Dolt path forks and execs `bd` for every tool call. With
+the pinned Beads 1.3.1 binary, the repository benchmark measured approximately
+421 ms p50 for a sequential `get`. A Dolt server workspace using per-call CLI
+execution measured approximately 99 ms p50; keeping `bd serve` open over
+loopback measured approximately 13–15 ms p50.
+
+The lower-latency path is opt-in through `BD_SERVE_URL` and requires the stable
+external-Dolt `--server` backend plus a `bd serve` sidecar. The upstream
+`--proxied-server` mode remains experimental and is not required by this
+implementation. Switching an existing embedded workspace is a data migration
+and adds an independently operated Dolt SQL server, so the default remains
+embedded mode.
+
+HTTP execution preserves the existing tool schemas, FIFO queue, ownership
+rules, error codes, and client-computed revision/CAS contract. HTTP mode plus
+multiple MCP replicas is not a verified guarantee; keep one replica until
+cross-pod ownership and conditional-write behavior are explicitly tested.
 
 ## Verification status
 
